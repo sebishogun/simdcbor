@@ -20,14 +20,31 @@ that consumed JSON into `any` consumes CBOR unchanged. Checked against
 `encoding/json` for the shape, over a generated corpus, with truncation
 and random-input fuzzing that must never panic.
 
+## Beyond decode
+
+- **`Skip(data)`** advances past an item without building it -- the
+  filtering hot path. Decoding only 1 record in 100 of a stream and
+  skipping the rest runs **8.4x** faster than decoding all of them
+  (79 us vs 662 us), because Skip allocates nothing.
+- **`Marshal(v)`** encodes the same shaped set, canonically (sorted map
+  keys, shortest-form numbers), round-trip-checked against fxamacker.
+
 ## Speed
 
-A realistic nested record decoded into `any`, minimum of three on
-amd64/avx512:
+Decode into `any`, minimum of three on amd64/avx512, against
+fxamacker/cbor:
 
-| | ns/op | |
-|---|---|---|
-| **simdcbor** | **637** | |
-| fxamacker/cbor | 986 | 1.55× |
+| shape | simdcbor | fxamacker | |
+|---|---|---|---|
+| nested record | 637 ns | 986 | 1.55x |
+| strings | 1,175 ns | 2,162 | 1.84x |
+| numbers | 2,570 ns | 4,288 | 1.67x |
+| 5,000-element array | 74.9 us | 101 | 1.35x |
+
+The huge-array row is the narrowest because it is allocation-bound: a
+`[]any` of five thousand boxed floats is mostly the boxing, which the
+two-stage scan cannot remove. That is the same any-decode residual
+simdjson documents; the next lever is lazy values (items as byte ranges
+until touched), measured and deferred -- see the note in decode.go.
 
 Pure Go, no cgo.
