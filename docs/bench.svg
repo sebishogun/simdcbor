@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="274" font-family="system-ui,-apple-system,sans-serif" font-size="13">
+<style>text{fill:#222}.mut{fill:#888}@media(prefers-color-scheme:dark){text{fill:#e0e0e0}.mut{fill:#999}}</style>
+<text x="14" y="26" font-size="15" font-weight="700">simdcbor — decode into any vs fxamacker</text>
+<text x="14" y="46" class="mut" font-size="12">ns per op, lower is better; minimum of three</text>
+<text x="14" y="84">nested record</text>
+<rect x="200" y="73" width="2" height="13" rx="2" fill="#3aa675"/>
+<text x="208" y="84" font-size="11">ours 637  <tspan font-weight="700">1.5x slower</tspan></text>
+<rect x="200" y="89" width="4" height="10" rx="2" fill="#bbb"/>
+<text x="210" y="98" class="mut" font-size="10">fxamacker 986</text>
+<text x="14" y="130">strings</text>
+<rect x="200" y="119" width="4" height="13" rx="2" fill="#3aa675"/>
+<text x="210" y="130" font-size="11">ours 1.2K  <tspan font-weight="700">1.8x slower</tspan></text>
+<rect x="200" y="135" width="8" height="10" rx="2" fill="#bbb"/>
+<text x="214" y="144" class="mut" font-size="10">fxamacker 2.2K</text>
+<text x="14" y="176">numbers</text>
+<rect x="200" y="165" width="9" height="13" rx="2" fill="#3aa675"/>
+<text x="215" y="176" font-size="11">ours 2.6K  <tspan font-weight="700">1.7x slower</tspan></text>
+<rect x="200" y="181" width="15" height="10" rx="2" fill="#bbb"/>
+<text x="221" y="190" class="mut" font-size="10">fxamacker 4.3K</text>
+<text x="14" y="222">5000-elem array</text>
+<rect x="200" y="211" width="267" height="13" rx="2" fill="#3aa675"/>
+<text x="473" y="222" font-size="11">ours 74.9K  <tspan font-weight="700">1.4x slower</tspan></text>
+<rect x="200" y="227" width="360" height="10" rx="2" fill="#bbb"/>
+<text x="566" y="236" class="mut" font-size="10">fxamacker 101.1K</text>
+</svg>

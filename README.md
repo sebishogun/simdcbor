@@ -31,6 +31,9 @@ and random-input fuzzing that must never panic.
 
 ## Speed
 
+![benchmarks](docs/bench.svg)
+
+
 Decode into `any`, minimum of three on amd64/avx512, against
 fxamacker/cbor:
 
