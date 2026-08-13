@@ -48,13 +48,17 @@ Notes the source pins: `undefined` (`0xf7`) decodes to `nil` like `null`;
 `[]byte` marshals as a byte string but unmarshals to `string`; text
 strings are UTF-8-validated (`ErrMalformed` on invalid).
 
-**Canonical, scoped.** `Marshal` sorts map keys bytewise (`sort.Strings`)
-and writes shortest-form heads and `float32` when it round-trips — so the
-same map encodes to the same bytes, the property a cache key needs. The
-bytewise sort is RFC 8949 §4.2.1 core-deterministic's key rule for text
-keys; the §4.2.3 length-first legacy ordering is not implemented, and the
-encoder never emits `float16`. The "canonical" claim is exactly what the
-code and tests prove, no more.
+**Canonical, scoped.** `Marshal` sorts Go string keys with
+`sort.Strings` and writes shortest-form heads and `float32` when it
+round-trips — so the same map encodes to the same bytes, the property a
+cache key needs. This is **not** RFC 8949 §4.2.1 core deterministic:
+that order compares the encoded bytes of each key, head included
+(`"z"` → `61 7a` sorts before `"aa"` → `62 61 61`), while
+`sort.Strings` compares content bytes (`"aa"` first). The two coincide
+only where the head does not decide the order — e.g. equal-length text
+keys, whose heads are identical. The §4.2.3 length-first legacy ordering
+is not implemented either, and the encoder never emits `float16`. The
+"canonical" claim is exactly what the code and tests prove, no more.
 
 There is **no full RFC 8949 conformance claim** in this repository. The
 full codec — exact value model, streaming decoder/encoder, tags,

@@ -61,14 +61,20 @@ shipped encoder would have produced.
 Mode names are the data-model LLD's, unambiguous:
 
 - `CoreDeterministic` (RFC 8949 §4.2.1): **bytewise** lexicographic order
-  over the canonical wire encoding of each key (data-model LLD: shortest
-  head, shortest float), so non-text keys order by their bytes;
+  over the full canonical wire encoding of each key — head and body
+  (data-model LLD: shortest head, shortest float), so non-text keys order
+  by their bytes;
 - `LengthFirst` (RFC 8949 §4.2.3, legacy): **length first, then
   bytewise** — the RFC 7049 §3.9 "Canonical CBOR" rule;
-- adapter mode: exactly `sort.Strings` on the text keys — which is
-  `CoreDeterministic`'s key rule for the text-key subset — whatever the
-  underlying value layer does; the adapter sorts before encoding, as
-  today.
+- adapter mode: exactly `sort.Strings` on the text keys — a
+  content-bytewise order over Go string keys, which is **not**
+  `CoreDeterministic`'s encoded-byte order (that compares the full
+  encoded key, head included, so text keys of differing encoded lengths
+  order by length through the head: `"z"` → `61 7a` before `"aa"` →
+  `62 61 61`, where `sort.Strings` puts `"aa"` first). The two coincide
+  only for equal-length text keys. The adapter sorts before encoding, as
+  today — its fixed mode is a scoped Go-string-key claim, not RFC core
+  canonical.
 
 Interop pairing against fxamacker/cbor v2.9.2 (verified against its
 source, `encode.go`): `CoreDetEncOptions()` (`SortCoreDeterministic` =

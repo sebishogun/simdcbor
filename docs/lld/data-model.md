@@ -117,8 +117,9 @@ policy.
 ## Deterministic ordering (CoreDeterministic and LengthFirst)
 
 Two orderings, one comparator, two modes, named unambiguously. Keys are
-compared by their **canonical wire encodings** (shortest head, shortest
-float — never layout-dependent):
+compared by their **canonical wire encodings** — the full encoded bytes,
+head and body, in shortest form; never the content bytes alone, never
+layout-dependent:
 
 - `CoreDeterministic` (RFC 8949 §4.2.1): sort **bytewise** in
   lexicographic order of the encoded keys. This is the RFC's core
@@ -128,12 +129,17 @@ float — never layout-dependent):
   shorter keys sort earlier, ties broken lexicographically. This is the
   RFC 7049 §3.9 "Canonical CBOR" rule.
 
-The current `Marshal` sorts Go string keys bytewise with `sort.Strings` —
-that matches `CoreDeterministic`'s key rule for the text-key subset and
-does **not** match `LengthFirst`. The shipped claim ("same map, same
-bytes") survives either; the length-first ordering does not exist yet and
-will arrive with the modes. No ordering applies inside `Array` (order is
-data).
+The shipped `Marshal` sorts Go string keys with `sort.Strings` — a
+content-bytewise order over the key **contents**. That is **not**
+`CoreDeterministic`: the mode's comparator orders the full encoded keys,
+head byte included, so text keys of differing encoded lengths order by
+length through the head (`"z"` → `61 7a` sorts before `"aa"` →
+`62 61 61` under `CoreDeterministic`; `sort.Strings` puts `"aa"` first).
+The two coincide only where the head cannot alter the comparison —
+equal-length text keys, whose head bytes are identical. The shipped
+claim ("same map, same bytes") survives either; `CoreDeterministic` and
+`LengthFirst` arrive with the modes as true encoded-byte comparators.
+No ordering applies inside `Array` (order is data).
 
 ## Shortest forms
 

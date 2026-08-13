@@ -213,7 +213,7 @@ Expected: PASS.
 
 `keys_test.go`: bytes key `h'00'` equals bytes key `h'00'` and differs from `h'0000'`; float key `0xf9 3c00` equals `0xfa 3f800000` (both `1.0`) under canonical-encoding equality, and `NaN` keys are stable (each NaN key equals itself under canonical encoding); structural keys rejected by default, enabled by a mode flag, and then `[]Value{1,2}` ≠ `[]Value{1,2,0}`.
 
-`order_test.go`: the `CoreDeterministic` comparator is bytewise lexicographic (RFC 8949 §4.2.1); the `LengthFirst` comparator is length-first then bytewise (RFC 8949 §4.2.3 legacy, the RFC 7049 §3.9 "Canonical CBOR" rule). A specific pair of keys pins both: `h'ff'` vs `h'0000'` — bytewise sorts `h'0000'` first (0x00 < 0xff); length-first sorts `h'ff'` first (shorter). And same-length `h'ff'` vs `h'00'` is bytewise in both.
+`order_test.go`: the `CoreDeterministic` comparator is bytewise lexicographic over the **full encoded keys — head and body** (RFC 8949 §4.2.1); the `LengthFirst` comparator is length-first then bytewise (RFC 8949 §4.2.3 legacy, the RFC 7049 §3.9 "Canonical CBOR" rule). Text keys of differing encoded lengths prove the head participates: `"z"` (`61 7a`) vs `"aa"` (`62 61 61`) — both RFC modes put `"z"` first (head 0x61 < 0x62 / shorter), while `sort.Strings` puts `"aa"` first; that contrast is the adapter-mode boundary, pinned again in Task 10. A pair that separates the two modes: `h'ff'` vs `h'0000'` — bytewise sorts `h'0000'` first (0x00 < 0xff); length-first sorts `h'ff'` first (shorter). Same-length `h'ff'` vs `h'00'` is bytewise in both.
 
 Run: `go test ./value/`
 Expected: FAIL.
@@ -377,8 +377,8 @@ git commit -m "feat(codec): streaming encoder, container stack, fxamacker intero
 **Step 1: Write the failing mode tests**
 
 `modes_test.go`:
-- mode names are the data-model LLD's, unambiguous: `CoreDeterministic` (RFC 8949 §4.2.1, bytewise) and `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then bytewise);
-- `CoreDeterministic` sorts bytewise (`h'0000'` before `h'ff'`); `LengthFirst` sorts `h'ff'` before `h'0000'` (shorter first);
+- mode names are the data-model LLD's, unambiguous: `CoreDeterministic` (RFC 8949 §4.2.1, bytewise over the full encoded keys — head and body) and `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then bytewise);
+- `CoreDeterministic` sorts encoded-bytewise (`h'0000'` before `h'ff'`; text `"z"` → `61 7a` before `"aa"` → `62 61 61`); `LengthFirst` sorts `h'ff'` before `h'0000'` (shorter first);
 - both modes' float rule: `1.0` encodes `f9 3c00`, `1.5` encodes `f9 3e00`, a value that does not round-trip through `float16` encodes `fa`/`fb`; the adapter mode (Task 10) never emits `f9`;
 - duplicate policies: `Error` → `ErrDuplicateKey` on the second canonical-equal key; `FirstWins`/`LastWins` pin their map results; `0xf9 3c00` and `0xfa 3f800000` are the same key under every policy.
 

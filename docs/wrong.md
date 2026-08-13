@@ -53,15 +53,20 @@ remaining input before the allocation, always.**
 
 **Status:** record, not a finding against a change.
 
-The encoder sorts keys bytewise (`sort.Strings`) and writes shortest
-heads and float32-when-it-round-trips. The word "canonical" appears in
-`encode.go`'s doc comment; the test that pins it proves only
-same-map-same-bytes. The bytewise sort is RFC 8949 §4.2.1 core
-deterministic's key rule for text keys; the §4.2.3 length-first legacy
-ordering and `float16` emission are not implemented. The README now
-scopes the claim to what the code and tests prove; anyone reading
-"canonical" in this codebase should read "canonical within the subset:
-bytewise sort, no float16, no length-first".
+The encoder sorts keys with `sort.Strings` (content-bytewise over Go
+string keys) and writes shortest heads and float32-when-it-round-trips.
+The word "canonical" appears in `encode.go`'s doc comment; the test that
+pins it proves only same-map-same-bytes. The sort is **not** RFC 8949
+§4.2.1 core deterministic: that order compares the full encoded keys,
+head included, so text keys of differing encoded lengths order by length
+through the head (`"z"` → `61 7a` before `"aa"` → `62 61 61`), while
+`sort.Strings` orders by content (`"aa"` first); the two coincide only
+for equal-length text keys. The §4.2.3 length-first legacy ordering and
+`float16` emission are not implemented either. The README now scopes the
+claim to what the code and tests prove; anyone reading "canonical" in
+this codebase should read "canonical within the subset: sorted Go string
+keys, shortest heads, float narrowing, no float16, no length-first, no
+encoded-bytewise order".
 
 ## Skip accepts simple values Unmarshal rejects
 

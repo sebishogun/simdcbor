@@ -73,10 +73,13 @@ See `docs/lld/data-model.md`. The load-bearing decisions:
   `false`/`true`/`null`/`undefined`, `break` reserved as the indefinite
   terminator only;
 - duplicate policies `LastWins` (adapter) / `FirstWins` / `Error`;
-- orderings `CoreDeterministic` (RFC 8949 §4.2.1, bytewise) and
-  `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then bytewise) —
-  the shipped bytewise `sort.Strings` behavior becomes the adapter's
-  fixed mode (it is the core-deterministic key rule for text keys);
+- orderings `CoreDeterministic` (RFC 8949 §4.2.1, bytewise over the full
+  encoded keys — head and body) and `LengthFirst` (RFC 8949 §4.2.3
+  legacy, length-first then bytewise) — the shipped `sort.Strings`
+  behavior becomes the adapter's fixed mode; that mode is a scoped
+  content-bytewise claim over Go string keys, **not** the
+  `CoreDeterministic` comparator, which differs wherever encoded lengths
+  differ (`"z"` → `61 7a` sorts before `"aa"` → `62 61 61`);
 - shortest forms: heads as today, floats extended to `float16` under the
   modes (the adapter stays at `float32`-then-`float64`, never `0xf9`).
 
