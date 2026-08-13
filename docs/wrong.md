@@ -64,12 +64,13 @@ head included, so text keys of differing encoded lengths order by length
 through the head (`"z"` → `61 7a` before `"aa"` → `62 61 61`), while
 `sort.Strings` orders by content (`"aa"` first); the two coincide where
 the encoded head cannot reverse the content comparison — e.g.
-equal-length text keys, whose head bytes are identical. The §4.2.3 length-first legacy ordering and
-`float16` emission are not implemented either. The README now scopes the
-claim to what the code and tests prove; anyone reading "canonical" in
-this codebase should read "canonical within the subset: sorted Go string
-keys, shortest heads, float narrowing, no float16, no length-first, no
-encoded-bytewise order".
+equal-length text keys, whose head bytes are identical. The §4.2.3
+length-first legacy ordering and `float16` emission are not implemented
+either. The README now scopes the claim to what the code and tests
+prove; anyone reading "canonical" in this codebase should read
+"canonical within the subset: sorted Go string keys, shortest heads,
+float narrowing, no float16, no length-first, no encoded-bytewise
+order".
 
 ## Skip accepts simple values Unmarshal rejects
 

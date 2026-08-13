@@ -56,9 +56,10 @@ that order compares the encoded bytes of each key, head included
 (`"z"` → `61 7a` sorts before `"aa"` → `62 61 61`), while
 `sort.Strings` compares content bytes (`"aa"` first). The two coincide
 where the encoded head cannot reverse the content comparison — e.g.
-equal-length text keys, whose head bytes are identical. The §4.2.3 length-first legacy ordering
-is not implemented either, and the encoder never emits `float16`. The
-"canonical" claim is exactly what the code and tests prove, no more.
+equal-length text keys, whose head bytes are identical. The §4.2.3
+length-first legacy ordering is not implemented either, and the
+encoder never emits `float16`. The "canonical" claim is exactly what
+the code and tests prove, no more.
 
 There is **no full RFC 8949 conformance claim** in this repository. The
 full codec — exact value model, streaming decoder/encoder, tags,

@@ -150,19 +150,20 @@ length through the head (`"z"` → `61 7a` sorts before `"aa"` →
 `62 61 61` under `CoreDeterministic`; `sort.Strings` puts `"aa"` first).
 The two coincide where the encoded head cannot reverse the content
 comparison — e.g. equal-length text keys, whose head bytes are
-identical. The shipped
-claim ("same map, same bytes") survives either; `CoreDeterministic` and
-`LengthFirst` arrive with the modes as true encoded-byte comparators.
+identical. The shipped claim ("same map, same bytes") survives either;
+`CoreDeterministic` and `LengthFirst` arrive with the modes as true
+encoded-byte comparators.
 No ordering applies inside `Array` (order is data).
 
 ## Shortest forms
 
 `appendHead` already writes the shortest head for an argument (`ai < 24`
 inline, then `24`/`25`/`26`/`27`). The value layer does **no stream or
-wire I/O** — nothing is encoded here; its only wire-adjacent outputs are
-the canonical key encodings and comparators the codec's shortest-form
-emission depends on. Under the `CoreDeterministic`/`LengthFirst` modes
-the float rule extends:
+wire I/O**: no complete CBOR items are streamed or encoded for
+application output. Its wire-adjacent work is canonical key encoding and
+key comparison — the inputs the codec's shortest-form emission depends
+on. Under the `CoreDeterministic`/`LengthFirst` modes the float rule
+extends:
 
 - integers: shortest head for the magnitude (`0`–`23` inline, `uint8`,
   `uint16`, `uint32`, `uint64` / the negint magnitude mirror);

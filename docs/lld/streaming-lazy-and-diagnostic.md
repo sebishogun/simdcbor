@@ -99,7 +99,7 @@ human-readable CBOR:
 | `20` | `-1` |
 | `3b ffffffffffffffff` | `-18446744073709551616` (that is `-2^64`, `n = 2^64-1`; the renderer prints the mathematical value, not an int64) |
 | `42 01 02` | `h'0102'` (major 2, length 2 — the head is `0x42`, not `0x40`) |
-| `61 61` | `"a"` (JSON-style string syntax, per RFC 8949 §8, which references the Extended Diagnostic Notation (EDN) form as exact) |
+| `61 61` | `"a"` (JSON-style string syntax, per RFC 8949 §8; RFC 8610's Extended Diagnostic Notation (EDN) adds extensions) |
 | `f4` `f5` `f6` `f7` | `false` `true` `null` `undefined` |
 | `f9 3c00` | `1.0` (shortest decimal that round-trips) |
 | `e0` | `simple(0)` |
