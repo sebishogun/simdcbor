@@ -7,9 +7,10 @@
 head bytes finds where every item begins, then a walk builds values from
 that index instead of re-scanning. CBOR makes the framing explicit — every
 item's head byte carries its major type and a length — so the first pass is
-cheap arithmetic, and homogeneous runs within an item (copying a byte
-string, validating a text string's UTF-8) go through
-[simd](https://github.com/sebishogun/simd)'s kernels.
+cheap arithmetic. SIMD enters in exactly one place: validating a text
+string's UTF-8 via [simd](https://github.com/sebishogun/simd)'s
+`ValidUTF8` kernel. Byte-string copying is a plain memmove, not a simd
+kernel; no other simd kernel is used.
 
 Decoded shapes match `encoding/json`'s for the same logical data: objects
 become `map[string]any`, arrays `[]any`, numbers `float64`. A program that
@@ -41,10 +42,16 @@ This is the **JSON-shaped subset**, not the full RFC 8949 codec:
 - `undefined` (`0xf7`) decodes to `nil`, same as `null`;
 - `[]byte` marshals as a byte string, but unmarshals to `string` (bytes
   and text share a decode path);
+- simple values: `false`/`true`/`null` decode (and `undefined` → `nil`),
+  floats `25`/`26`/`27` decode to `float64`; simple values `0`–`19`
+  (`0xe0`–`0xf3`) and the two-byte `0xf8` form are rejected by
+  `Unmarshal` but **accepted by `Skip`** — a known parity bug (see Skip
+  below; `docs/wrong.md`; plan Stage 0);
 - canonical behavior exists only to the extent the code and tests prove
-  it: sorted keys (bytewise), shortest head forms, `float32` when it
-  round-trips — **no** `float16` emission, **no** RFC 8949 §4.2.1
-  length-then-bytewise key order. There is no full-RFC claim anywhere.
+  it: sorted keys (bytewise — the RFC 8949 §4.2.1 core-deterministic key
+  rule for text keys), shortest head forms, `float32` when it round-trips
+  — **no** `float16` emission, **no** RFC 8949 §4.2.3 length-first
+  legacy key order. There is no full-RFC claim anywhere.
 
 See `docs/verification.md` for what the tests actually pin.
 
@@ -73,10 +80,12 @@ See `docs/verification.md` for what the tests actually pin.
      fix a fuzzer forced on the original unguarded presize;
    - tag: transparent — decode the tagged item (depth decremented, tag
      number discarded);
-   - simple: `20`/`21` → `false`/`true`, `22`/`23` → `nil`, `25`/`26`/`27`
-     → `float32`/`float64` via `math.Float32frombits` /
-     `math.Float64frombits` (NaN/Inf payloads survive), `24` and anything
-     else → `ErrMalformed`.
+   - simple: `20`/`21` → `false`/`true`, `22`/`23` → `nil`, `25` → `float64`
+     (half via `halfToFloat32bits` then `Float32frombits`), `26` →
+     `float64` (`Float32frombits`), `27` → `float64`
+     (`Float64frombits`) — every float width decodes to `float64`, NaN/Inf
+     payloads survive; `ai` 0–19, `24`, and anything else →
+     `ErrMalformed`.
 4. **Consumed count.** `Unmarshal` returns the index past the item;
    trailing data is the caller's business (frame the next item with
    `Skip`).
@@ -84,17 +93,26 @@ See `docs/verification.md` for what the tests actually pin.
 The scan is two-stage in the sense the package comment describes — the
 head pass finds items, the walk builds values — but the shipped decoder is
 one recursive pass over `[]byte`, not the simulated index of
-`simdjson`. SIMD enters where runs are homogeneous: `ValidUTF8` on text,
-and (via the string copy) the byte-string memmove.
+`simdjson`. SIMD enters in exactly one place: `ValidUTF8` on text
+strings. The byte-string copy is a runtime memmove, not a simd kernel.
 
 ## Skip
 
 `Skip` is the same recursion with the build step removed: frame the head,
-walk lengths. It allocates nothing. Its contract is stronger than a
-separate implementation would be: **the accept/reject boundary is
-identical to `Unmarshal`'s** — a `Skip` that succeeds is an item
-`Unmarshal` would decode, with the same span. `TestSkipMatchesUnmarshal`
-enforces this over a generated corpus. Depth cap is the same 64.
+walk lengths. It allocates nothing. The intended contract is that the
+accept/reject boundary is identical to `Unmarshal`'s — a `Skip` that
+succeeds is an item `Unmarshal` would decode, with the same span.
+
+**That contract is currently violated.** `skip.go` accepts every simple
+value the head allows — major 7, `ai` 0–19 (`0xe0`–`0xf3`) and the
+two-byte `0xf8` form — while `decode.go` rejects those bytes with
+`ErrMalformed`, so a `Skip` can succeed where `Unmarshal` refuses. The
+test that claims to enforce parity cannot see it: the generated corpus
+never produces those simple values, and the random-bytes loop discards
+both errors. The divergence is recorded in `docs/wrong.md` and scheduled
+as Stage 0 of the production plan; the fix direction is policy-driven
+accept sets (the full simple-value model) rather than letting the two
+paths silently diverge. Depth cap is the same 64.
 
 ## Marshal
 
@@ -115,8 +133,9 @@ as the double. Unsupported types return `ErrMalformed`.
 | `ErrMalformed` | reserved `ai`, indefinite forms, non-string map key, invalid UTF-8, unknown simple value, unsupported marshal type, depth exceeded |
 
 `ErrMalformed` covers both "not CBOR" and "CBOR outside the subset" —
-deliberate: the subset has one reject boundary, shared by `Unmarshal` and
-`Skip`.
+deliberate: the subset has one reject boundary, intended to be shared by
+`Unmarshal` and `Skip` — currently violated for simple values (see Skip
+above; `docs/wrong.md`; plan Stage 0).
 
 ## Target architecture (designed, not built)
 
@@ -126,7 +145,9 @@ The approved full RFC 8949 codec is designed in
 
 - **`simdcbor` (root)** — the current JSON-shaped API, rebuilt as an
   explicit adapter over the full codec, byte-for-byte compatible with the
-  shipped behavior;
+  shipped behavior, with the Skip/Unmarshal simple-value divergence
+  closed (plan Stage 0) while every shipped accept/reject decision for
+  values the subset handles is preserved;
 - **`simdcbor/value`** — the exact value model: kinds for every CBOR major
   and simple type, integer/float bit fidelity, tags, arbitrary keys;
 - **`simdcbor/diag`** — RFC 8949 §8 diagnostic notation;

@@ -97,16 +97,21 @@ human-readable CBOR:
 |---|---|
 | `00` | `0` |
 | `20` | `-1` |
-| `40 01 02` | `h'0102'` |
+| `3b ffffffffffffffff` | `-18446744073709551616` (that is `-2^64`, `n = 2^64-1`; the renderer prints the mathematical value, not an int64) |
+| `42 01 02` | `h'0102'` (major 2, length 2 — the head is `0x42`, not `0x40`) |
 | `61 61` | `"a"` (escaped per §8.2.1) |
 | `f4` `f5` `f6` `f7` | `false` `true` `null` `undefined` |
 | `f9 3c00` | `1.0` (shortest decimal that round-trips) |
 | `e0` | `simple(0)` |
+| `f8 20` | `simple(32)` (two-byte simple form, values 32–255; `0xf8` with a value below 32 is malformed) |
+| `ff` | not an item — the break terminator; diagnostic only inside `[_ …]`/`{_ …}` |
 | `80` `81 00` | `[]` `[0]` |
 | `9f 00 ff` | `[_ 0]` |
+| `5f 42 01 02 ff` | `(_ h'0102')` (indefinite bytes, chunked) |
+| `7f 61 61 61 62 ff` | `(_ "ab")` (indefinite text, chunked) |
 | `a0` `a1 61 61 01` | `{}` `{"a": 1}` |
 | `bf 61 61 01 ff` | `{_ "a": 1}` |
-| `c0 78 18 ...` | `0("2013-03-21T20:04:00Z")` (any tag: `N(...)`) |
+| `c0 74 32 30 31 33 2d 30 33 2d 32 31 54 32 30 3a 30 34 3a 30 30 5a` | `0("2013-03-21T20:04:00Z")` — tag 0 of a text string: the payload is the 20-byte date-time string, so the head is `0x74` (text, length 20), not `0x78 0x18` |
 
 Rules pinned in the LLD sense:
 
@@ -114,9 +119,10 @@ Rules pinned in the LLD sense:
   bits (the dtoa machinery simd already ships for the JSON side);
 - `NaN`, `Infinity`, `-Infinity` render as `nan`, `infinity`,
   `-infinity`;
-- indefinite containers render with `[_` / `{_`; the parser accepts both
-  definite and indefinite and distinguishes them in the value model via
-  the container's wire form (a decode-time flag, not a value kind);
+- indefinite containers render with `[_` / `{_`, and indefinite byte/text
+  strings with `(_ h'...')` / `(_ "…")`; the parser accepts both definite
+  and indefinite and distinguishes them in the value model via the
+  container's wire form (a decode-time flag, not a value kind);
 - tags render `N(value)`, nested tags nest;
 - the parser accepts the full notation, including `simple(n)` and
   `h'...'`/`b64'...'` forms, and round-trips through the value model.

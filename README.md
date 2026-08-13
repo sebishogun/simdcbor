@@ -4,8 +4,9 @@ CBOR (RFC 8949) decoding built on [simd.go](https://github.com/sebishogun/simd),
 the binary sibling of [simdjson](https://github.com/sebishogun/simdjson):
 the same two-stage architecture — find where every item begins, then
 build values from that — applied to a format whose framing is explicit
-in the head bytes. Homogeneous runs (copying a byte string, validating a
-text string's UTF-8) go through simd's kernels.
+in the head bytes. SIMD enters in exactly one place: validating a text
+string's UTF-8 through simd's `ValidUTF8` kernel. Byte-string copying is
+a plain memmove.
 
 ## API
 
@@ -38,6 +39,7 @@ what is and is not supported, from the source:
 | unsigned, negative, half/single/double floats → `float64` | integer-exact decode (all numbers are `float64`) |
 | tags (consumed and **discarded**; inner item decoded) | tag numbers, tag values |
 | string map keys | arbitrary keys (non-string key → `ErrMalformed`) |
+| simple values `false`/`true`/`null`, `undefined`→`nil`, floats 25–27 | simple values 0–19 (`0xe0`–`0xf3`) and the `0xf8` form: `Unmarshal` rejects, **`Skip` accepts** — a known inconsistency (see Skip below) |
 | duplicate keys: last value wins | duplicate policies (error / first-wins) |
 | depth up to 64 (exceeding → `ErrMalformed`) | configurable limits |
 | `Marshal` types: `nil`, `bool`, `string`, `[]byte`, `float64`, `float32`, `int`, `int64`, `uint64`, `[]any`, `map[string]any` | `uint` and other fixed-width ints, arbitrary types |
@@ -46,12 +48,13 @@ Notes the source pins: `undefined` (`0xf7`) decodes to `nil` like `null`;
 `[]byte` marshals as a byte string but unmarshals to `string`; text
 strings are UTF-8-validated (`ErrMalformed` on invalid).
 
-**Canonical, scoped.** `Marshal` sorts map keys bytewise and writes
-shortest-form heads and `float32` when it round-trips — so the same map
-encodes to the same bytes, the property a cache key needs. It does not
-implement RFC 8949 §4.2.1 length-first ordering and it never emits
-`float16`; the "canonical" claim is exactly what the code and tests
-prove, no more.
+**Canonical, scoped.** `Marshal` sorts map keys bytewise (`sort.Strings`)
+and writes shortest-form heads and `float32` when it round-trips — so the
+same map encodes to the same bytes, the property a cache key needs. The
+bytewise sort is RFC 8949 §4.2.1 core-deterministic's key rule for text
+keys; the §4.2.3 length-first legacy ordering is not implemented, and the
+encoder never emits `float16`. The "canonical" claim is exactly what the
+code and tests prove, no more.
 
 There is **no full RFC 8949 conformance claim** in this repository. The
 full codec — exact value model, streaming decoder/encoder, tags,
@@ -64,7 +67,11 @@ notation — is designed and planned: [design](docs/plans/2026-08-13-simdcbor-pr
 - **`Skip(data)`** advances past an item without building it — the
   filtering hot path. Decoding only 1 record in 100 of a stream and
   skipping the rest runs **8.4x** faster than decoding all of them
-  (79 us vs 662 us), because Skip allocates nothing.
+  (79 us vs 662 us), because Skip allocates nothing. One caveat: `Skip`
+  today accepts simple values (`0xe0`–`0xf3`, `0xf8` + byte) that
+  `Unmarshal` rejects — a known inconsistency, recorded in
+  [docs/wrong.md](docs/wrong.md) and scheduled as Stage 0 of the
+  [production plan](docs/plans/2026-08-13-simdcbor-production.md).
 - **`Marshal(v)`** encodes the same shaped set (see the scoped canonical
   note above), round-trip-checked against fxamacker.
 

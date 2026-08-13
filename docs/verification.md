@@ -19,7 +19,11 @@ one quiet machine (amd64/avx512), the floor being 8.3% (code-layout
 noise; see CLAUDE.md). `bench-check` currently tees to
 `/tmp/simdcbor-bench.txt` for comparison against the quoted record; the
 reference file `testdata/bench.txt` is not yet committed — the 8% floor
-is a gate discipline, not a committed artifact.
+is a gate discipline, not a committed artifact. **Caveat:** `bench-check`
+pipes `go test` through `tee` without `pipefail`, so the pipe reports
+`tee`'s status and a failing run would launder green. Run it under
+`set -o pipefail`, or treat it as informational; the plan's Task 2
+(roadmap Phase 1, safety) fixes the Makefile.
 
 ## What the tests pin today
 
@@ -30,8 +34,16 @@ is a gate discipline, not a committed artifact.
 - **Round trip**: `Marshal` → `Unmarshal` is identity on the shaped set,
   and fxamacker decodes our bytes (3000 cases); the same map encodes to
   the same bytes (canonical-within-the-subset claim).
-- **Skip parity**: `Skip` and `Unmarshal` agree on accept/reject and on
-  span, over a generated corpus (5000 cases).
+- **Skip parity (known broken, scheduled)**: the intent — `Skip` and
+  `Unmarshal` agree on accept/reject and span — is exercised by
+  `TestSkipMatchesUnmarshal` over a generated corpus (5000 cases), but
+  the test is blind to the one real divergence: the corpus never
+  generates simple values (`ai` 0–19, `0xf8` form) and the random-bytes
+  loop discards both errors (`_ = ue; _ = se`), so it asserts nothing
+  about agreement. `Skip` accepts those simple values; `Unmarshal`
+  rejects them with `ErrMalformed`. Recorded in `docs/wrong.md`; fixed
+  by the plan's Stage 0, with corpus and assertion work in the decoder
+  task.
 - **Truncation**: every prefix of a real item errors; **random bytes**
   never panic (5000 inputs); the fuzzer-caught presize overflow is
   regression-covered by the pre-flight bound.
@@ -49,14 +61,19 @@ When the production plan lands, verification grows to:
    §3.4/§4 example items) decodes to the documented value and encodes
    back to the documented bytes. Vectors are committed testdata, not
    generated.
-2. **fxamacker interop.** Both directions, across modes: our bytes decode
-   in fxamacker (default and canonical modes); fxamacker's bytes decode
-   here; arbitrary-key and tag forms included. Where the two libraries
-   legitimately differ (duplicate policy, tag interpretation), the
-   difference is pinned by a test with the reason in a comment — the
-   oracle is the RFC, not fxamacker.
-3. **Duplicate/canonical profiles.** Each `DuplicatePolicy` × each
-   ordering mode has a profile test: specific inputs, specific bytes,
+2. **fxamacker interop.** Both directions, across modes, paired
+   correctly against the installed v2.9.2: fxamacker's
+   `CoreDetEncOptions()` (bytewise `SortCoreDeterministic`) ↔ our
+   `CoreDeterministic`; `CanonicalEncOptions()` (length-first
+   `SortCanonical` — fxamacker's "canonical" is the RFC 7049 §3.9 legacy
+   ordering, not bytewise) ↔ our `LengthFirst`. Where the two libraries
+   legitimately differ (duplicate policy, tag interpretation, fxamacker's
+   NaN→`0xf97e00`/Inf→float16 normalization under its deterministic
+   options), the difference is pinned by a test with the reason in a
+   comment — the oracle is the RFC, not fxamacker.
+3. **Duplicate-policy and deterministic-mode profiles.** Each
+   `DuplicatePolicy` × each ordering mode (`CoreDeterministic`,
+   `LengthFirst`) has a profile test: specific inputs, specific bytes,
    specific errors.
 4. **Fuzz.** `go test -fuzz` with a seeded corpus (RFC vectors +
    truncated corpus items + structured garbage) under `-race`, asserting

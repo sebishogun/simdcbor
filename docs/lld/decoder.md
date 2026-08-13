@@ -28,12 +28,19 @@ Each item is read as: **head byte → argument → body**.
    inside an indefinite container; anywhere else `ErrMalformed` (this is
    the shipped rule, preserved).
 3. **Body by major type:**
-   - `0`/`1` — value is the argument; exact (`uint64` / `-1-n` as
-     `int64`), never `float64` at this layer;
-   - `2`/`3` — length `L`, bounds-checked against the remaining input
-     (`ErrTruncated` if it overruns), body copied; text validated
-     `simd.ValidUTF8` (`ErrMalformed`); **definite head with `ai 31` is
-     rejected** before any length is read;
+   - `0`/`1` — value is the argument; exact (`uint64`, and `NegInt` as its
+     `uint64` magnitude `n` with mathematical value `-1-n`, over the full
+     `-1`..`-2^64` range), never `float64` at this layer;
+   - `2`/`3` — definite: length `L`, bounds-checked against the remaining
+     input (`ErrTruncated` if it overruns), body copied, text validated
+     `simd.ValidUTF8` (`ErrMalformed`). Indefinite (`ai 31`): a sequence
+     of zero or more **definite** chunks of the same major type,
+     concatenated in order, terminated by `break`; bytes chunks
+     concatenate raw, text chunks concatenate and the **result** is
+     validated as UTF-8 (each chunk is itself a text string, so the
+     concatenation is what the wire means). The shipped subset rejects
+     indefinite byte/text (`ai 31` → `ErrMalformed`); the full decoder
+     accepts them;
    - `4`/`5` — definite: `n` children (maps: `2n`); indefinite: children
      until `break`. The indefinite child loop is the one real state
      machine: read child heads, on `break` (major 7, `ai 31`) terminate
@@ -43,11 +50,13 @@ Each item is read as: **head byte → argument → body**.
      `ErrTruncated` respectively;
    - `6` — tag number; the tagged item is the next item at the new depth;
      tags may nest. Mode decides `Discard` (adapter) / `Keep` (`Tag`);
-   - `7` — simple values and floats: `0`–`19` simple, `20`/`21`
-     `false`/`true`, `22` `null`, `23` `undefined` (the shipped decoder
-     maps both 22 and 23 to `nil`; the value model separates them),
-     `24`+byte simple, `25`/`26`/`27` half/single/double, `31` break
-     (terminator only).
+   - `7` — simple values and floats: `ai` 0–19 → numeric `Simple`
+     values `0`–`19`; `20`/`21` `false`/`true`, `22` `null`, `23`
+     `undefined` (the shipped decoder maps both 22 and 23 to `nil`; the
+     value model separates them); `24` + byte → `Simple` for values
+     `32`–`255` (values below 32 in this form are malformed); `25`/`26`/
+     `27` half/single/double; `31` break (terminator only — never a
+     standalone item).
 
 ## Depth and limits
 
@@ -79,18 +88,30 @@ Each item is read as: **head byte → argument → body**.
 
 The invariant that matters: **in adapter mode, the error set and the
 accept/reject boundary are identical to the shipped `Unmarshal`**, and
-`Skip` must span exactly what `Unmarshal` consumes — carried over from the
-shipped `TestSkipMatchesUnmarshal` into the new decoder's test suite as a
-property test over generated corpora.
+`Skip` must span exactly what `Unmarshal` consumes. The shipped
+`TestSkipMatchesUnmarshal` cannot enforce this on its own (see Skip
+parity below); the new decoder's suite enforces it by construction — the
+head-byte enumeration test, the extended corpus, and both errors
+asserted in the random-input loop (plan Tasks 1 and 4).
 
 ## Skip parity
 
 `Skip` is the decoder with the build step removed: frame heads, walk
 lengths, allocate nothing. It is not a separate grammar — the new decoder
-implements `skip` over the same state machine so the two can never drift
-(they have already drifted zero times; the invariant is enforced by test,
-not by hope). Skip respects the same limits (depth, pre-flight bounds) so
-a skip that succeeds is exactly an item the decoder would consume.
+implements `skip` over the same state machine, so the two **cannot
+drift**: accept sets and spans come from one code path.
+
+The shipped package is the standing counterexample. `skip.go` accepts
+every simple value the head allows (major 7, `ai` 0–19 and the `0xf8`
+form) while `decode.go` rejects them with `ErrMalformed` — a `Skip` that
+succeeds on bytes `Unmarshal` refuses. The shipped test cannot see it:
+the generated corpus never produces those simple values, and the
+random-bytes loop discards both errors (`_ = ue; _ = se`), so it asserts
+nothing about agreement. The divergence is recorded in `docs/wrong.md`;
+the plan's Stage 0 aligns the accept sets (policy-driven, so the full
+simple-value model is the end state rather than a silent divergence), and
+the decoder task adds the corpus and assertion work: head-byte
+enumeration, simple values in the generator, both errors asserted.
 
 ## Ownership and scratch
 

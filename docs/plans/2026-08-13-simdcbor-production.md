@@ -4,13 +4,15 @@
 
 **Goal:** Build the full RFC 8949 codec — `simdcbor/value`, `internal/codec` (streaming decoder/encoder), `simdcbor/diag` — with the shipped JSON-shaped API preserved as an explicit, byte-compatible adapter.
 
-**Architecture:** The design (read first, it is binding): `docs/plans/2026-08-13-simdcbor-production-design.md` and the LLDs it cites — `docs/lld/data-model.md`, `docs/lld/decoder.md`, `docs/lld/encoder.md`, `docs/lld/streaming-lazy-and-diagnostic.md`. Order: safety, value model (pure data, no wire), streaming decoder, streaming encoder, canonical/deterministic modes, tags, lazy values, diagnostic notation, then the adapter. Every phase keeps the existing test suite green; the adapter never changes shipped behavior.
+**Architecture:** The design (read first, it is binding): `docs/plans/2026-08-13-simdcbor-production-design.md` and the LLDs it cites — `docs/lld/data-model.md`, `docs/lld/decoder.md`, `docs/lld/encoder.md`, `docs/lld/streaming-lazy-and-diagnostic.md`. Order: Stage 0 (Skip/Unmarshal simple-value consistency), safety, value model, streaming decoder, streaming encoder, deterministic modes, tags, lazy values, diagnostic notation, then the adapter. Every phase keeps the existing test suite green; the adapter never changes shipped behavior.
 
 **Tech Stack:** Go 1.26 (`go.mod` already says 1.26.2), fxamacker/cbor v2.9.2 (already a dependency, the interop oracle), simd v1.20.0 (already a dependency, for `ValidUTF8` and kernels), standard `testing`/`testing/fuzz`, `go test -race`, `go vet`, `go tool objdump`, `perf stat`.
 
 **Self-containment:** The executor needs only this repository, this plan, and `AGENTS.md`/`CLAUDE.md` at the repository root — both already exist, are current, and are mandatory reading before Task 1. No other context. Commit after every task; never on `main` (work on a feature branch, e.g. `feat/full-codec`).
 
-**Ground rules (from CLAUDE.md, binding):** disassemble before explaining slowness; the 8.3% layout noise floor; interleaved A/B on the minimum; `perf stat -e instructions:u,cycles:u` for sub-floor claims; never pipe a gate through `tail` without `pipefail`; every allocation bounded by remaining input before it happens; every measurement or deferral that argues against a change goes into `docs/wrong.md` with its source.
+**Ground rules (from CLAUDE.md, binding):** disassemble before explaining slowness; the 8.3% layout noise floor; interleaved A/B on the minimum; `perf stat -e instructions:u,cycles:u` for sub-floor claims; never pipe a gate through `tail` (or anything) without `pipefail`; every allocation bounded by remaining input before it happens; every measurement or deferral that argues against a change goes into `docs/wrong.md` with its source.
+
+**Known shipped bug this plan fixes first:** `Skip` accepts simple values (`ai` 0–19, `0xf8` form) that `Unmarshal` rejects — the shipped parity test cannot see it (corpus never generates those values; the random-bytes loop discards both errors). Recorded in `docs/wrong.md`.
 
 ---
 
@@ -31,17 +33,88 @@ Expected: a feature branch, not `main`. Create one if needed: `git checkout -b f
 
 **Step 3: Confirm the agent files are self-contained**
 
-Read `AGENTS.md` and `CLAUDE.md`. They must name the shipped API, the subset gaps, the commands, the bench rules, and `docs/wrong.md`'s sourcing rule without referencing anything outside this repository. Fix them (docs-only) if they drift. Commit: `git add AGENTS.md CLAUDE.md && git commit -m "docs: keep agent files current"` (only if you changed them).
+Read `AGENTS.md` and `CLAUDE.md`. They must name the shipped API, the subset gaps, the Skip/Unmarshal simple-value bug, the commands, the bench rules, and `docs/wrong.md`'s sourcing rule without referencing anything outside this repository. Fix them (docs-only) if they drift. Commit: `git add AGENTS.md CLAUDE.md && git commit -m "docs: keep agent files current"` (only if you changed them).
 
 ---
 
-### Task 1: Safety hardening
+### Task 1: Skip/Unmarshal simple-value consistency (Stage 0)
+
+**Files:**
+- Modify: `skip.go` (simple-value accept set)
+- Modify: `skip_test.go` (head-byte enumeration test)
+
+**Context:** `skip.go`'s `case mtUint, mtNegInt, mtSimple: return j, nil` accepts every simple `ai` the argument reader allows — including `ai` 0–19 (`0xe0`–`0xf3`) and the two-byte `0xf8` form — while `decode.go` handles only `ai` 20–23 and 25–27 and rejects the rest with `ErrMalformed`. The doc comment on `skip.go` claims the accept/reject boundary is identical to `Unmarshal`'s; it is not. `TestSkipMatchesUnmarshal` cannot see it: the generator never produces those simple values and the random-bytes loop discards both errors (`_ = ue; _ = se`).
+
+The fix direction is policy-driven, not "add the same rejection to Skip and stop": the approved target supports the full simple-value model (`docs/lld/data-model.md`), so in the end both paths accept the full space. Stage 0 is the interim consistency on the shipped subset — both paths reject the values outside it — so no shipped `Unmarshal` behavior changes, and the divergence cannot survive into the adapter.
+
+**Step 1: Write the failing enumeration test**
+
+In `skip_test.go`:
+
+```go
+// TestSkipAgreesWithUnmarshalOnEveryHead: for every head byte and the
+// two-byte simple form, Skip and Unmarshal must agree on accept/reject
+// and on span. This is the test the corpus-based test cannot be:
+// it enumerates the whole head space, so the simple-value divergence
+// (0xe0-0xf3, 0xf8 xx) cannot hide.
+func TestSkipAgreesWithUnmarshalOnEveryHead(t *testing.T) {
+	for h := 0; h < 256; h++ {
+		b := []byte{byte(h), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		_, un, uerr := Unmarshal(b)
+		sn, serr := Skip(b)
+		if (uerr == nil) != (serr == nil) {
+			t.Errorf("head %02x: unmarshal %v skip %v", h, uerr, serr)
+		}
+		if uerr == nil && sn != un {
+			t.Errorf("head %02x: span %d != consumed %d", h, sn, un)
+		}
+		// The two-byte simple form, for every payload byte.
+		for p := 0; p < 256; p++ {
+			b := []byte{0xf8, byte(p), 0x00}
+			_, un, uerr := Unmarshal(b)
+			sn, serr := Skip(b)
+			if (uerr == nil) != (serr == nil) {
+				t.Errorf("f8 %02x: unmarshal %v skip %v", p, uerr, serr)
+			}
+			if uerr == nil && sn != un {
+				t.Errorf("f8 %02x: span %d != consumed %d", p, sn, un)
+			}
+		}
+	}
+}
+```
+
+Run: `go test -run TestSkipAgreesWithUnmarshalOnEveryHead .`
+Expected: FAIL — the heads `e0`–`f3` and every `f8 xx` disagree (Skip accepts, Unmarshal rejects). This is the bug, now pinned.
+
+**Step 2: Implement the consistency fix**
+
+In `skip.go`, give the simple case the same accept set as `decode.go` for the shipped subset — `ai` 20–23 and 25–27 accept, `ai` 0–19 and 24 reject with `ErrMalformed` (readArg already rejects 28–30 and 31). Structure it as a policy check shared by both paths, so the decoder task (Task 4) only widens the policy to the full simple-value model — the two paths cannot drift again.
+
+**Step 3: Run the tests**
+
+Run: `go test ./...`
+Expected: PASS — the enumeration test is green and every shipped test still passes unchanged.
+
+**Step 4: Commit**
+
+```bash
+git add skip.go skip_test.go
+git commit -m "fix: align Skip's simple-value accept set with Unmarshal (Stage 0)"
+```
+
+Note what is deliberately **not** done here: the generative corpus does not yet emit simple values, and the random-bytes loop still discards errors. That assertion work is scheduled in the decoder task (Task 4), where the full simple-value model lands and both paths accept the full space.
+
+---
+
+### Task 2: Safety hardening
 
 **Files:**
 - Create: `fuzz_test.go` (package simdcbor)
 - Create: `testdata/fuzz/corpus/` seed files (RFC 8949 appendix A items, truncated prefixes, structured garbage)
 - Modify: `decode_test.go` (limit-pin tests)
 - Create: `limits_test.go`
+- Modify: `Makefile` (`bench-check` pipefail)
 
 **Step 1: Write the failing no-panic property test**
 
@@ -68,7 +141,7 @@ func FuzzUnmarshalNeverPanics(f *testing.F) {
 }
 ```
 
-Note: fuzz tests need an explicit `corpusSeeds` helper returning `[][]byte` built from the RFC appendix A bytes of `testdata/` (definite and indefinite items, tags, floats, `break` bytes, reserved `ai` 28–30).
+Note: fuzz tests need an explicit `corpusSeeds` helper returning `[][]byte` built from the RFC appendix A bytes of `testdata/` (definite and indefinite items, tags, floats, `break` bytes, reserved `ai` 28–30, and the `0xe0`–`0xf3`/`0xf8` simple forms).
 
 **Step 2: Run it to verify it fails (or is at least unsatisfied)**
 
@@ -88,41 +161,48 @@ func TestTruncationNeverErrorsAsClean(t *testing.T) // every prefix of a valid i
 Run: `go test -run 'TestDepthCap|TestPresizeBounded|TestTruncationNeverErrorsAsClean' .`
 Expected: PASS. The presize test is the regression for the fuzzer-caught overflow recorded in `docs/wrong.md`.
 
-**Step 4: Full fuzz budget under race**
+**Step 4: Fix the bench-check gate**
+
+`bench-check` pipes `go test` through `tee` without `pipefail`, so the pipe reports `tee`'s status and a red run launders green (documented in `docs/verification.md`). Fix the Makefile so the gate fails loudly, e.g. `SHELL := bash -o pipefail` at the top or an explicit `set -o pipefail` in the target body.
+
+Run: `make bench-check && echo GATE-OK`
+Expected: the target runs, tees, and returns `tee`'s-and-`go test`'s real status.
+
+**Step 5: Full fuzz budget under race**
 
 Run: `go test -race -run FuzzUnmarshalNeverPanics -fuzz FuzzUnmarshalNeverPanics -fuzztime 2m .` (with `set -o pipefail` if you pipe anything)
 Expected: clean exit, no crash, corpus grew.
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
-git add fuzz_test.go limits_test.go testdata/fuzz/
-git commit -m "test: pin decoder safety properties with fuzz and limits"
+git add fuzz_test.go limits_test.go testdata/fuzz/ Makefile
+git commit -m "test: pin decoder safety properties with fuzz and limits; fix bench-check pipefail"
 ```
 
 ---
 
-### Task 2: Value model — `simdcbor/value`
+### Task 3: Value model — `simdcbor/value`
 
 **Files:**
 - Create: `value/value.go` (kinds, `Value`, `Simple`, `Tag`, `KeyValue`)
 - Create: `value/value_test.go`
 - Create: `value/keys.go` (canonical key encoding, comparators, structural-key hash)
 - Create: `value/keys_test.go`
-- Create: `value/order.go` (`Deterministic`, `Canonical` comparators)
+- Create: `value/order.go` (`CoreDeterministic`, `LengthFirst` comparators)
 - Create: `value/order_test.go`
 - Create: `value/doc.go`
 
 **Step 1: Write the failing fidelity tests**
 
-`value/value_test.go` pins the data-model LLD: `Float16`/`Float32`/`Float64` keep wire bits (`NaN` payloads, `-0.0`, signaling bits round-trip through encode/decode helpers); `Uint` exact to `2^64-1`; `NegInt` exact to `-2^63`; conversion to `float64` is a separate explicit function (`AsFloat64`) and is lossy above `2^53` — test that `Uint(2^63+1).AsFloat64()` is documented-lossy, never silent-exact.
+`value/value_test.go` pins the data-model LLD: `Float16`/`Float32`/`Float64` keep wire bits (`NaN` payloads, `-0.0`, signaling bits round-trip through encode/decode helpers); `Uint` exact to `2^64-1`; `NegInt` exact over the full CBOR negative range `-1`..`-2^64` — stored as its `uint64` magnitude `n` with mathematical value `-1-n`, so the `-2^64` endpoint (`n = 2^64-1`, wire `3b ffffffffffffffff`) is representable even though no `int64` holds it; conversion to `float64` is a separate explicit function (`AsFloat64`) and is lossy above `2^53` — test that `Uint(2^63+1).AsFloat64()` is documented-lossy, never silent-exact, and that `NegInt` with magnitude `2^64-1` converts via `-1 - float64(n)`, matching the shipped decoder.
 
 Run: `go test ./value/`
 Expected: FAIL (types do not exist yet).
 
 **Step 2: Implement the value model**
 
-`value.go` per the LLD: kind-tagged `Value`; `Simple` with named `False`/`True`/`Null`/`Undefined`; `Tag{Number uint64, Value Value}`; ordered `Map []KeyValue`. Include `AsFloat64` and a `String()` only if the diag task needs it later (YAGNI: skip `String()` until Task 8).
+`value.go` per the LLD: kind-tagged `Value`; the full simple-value space — numeric `Simple` for values `0`–`19` (short form) and `32`–`255` (`0xf8` form), named `False`/`True`/`Null`/`Undefined` constants for 20–23, `24`–`31` reserved, `break` (`ai 31`) never a simple value; `Tag{Number uint64, Value Value}`; ordered `Map []KeyValue`. Include `AsFloat64` and a `String()` only if the diag task needs it later (YAGNI: skip `String()` until Task 9).
 
 **Step 3: Run the tests**
 
@@ -133,7 +213,7 @@ Expected: PASS.
 
 `keys_test.go`: bytes key `h'00'` equals bytes key `h'00'` and differs from `h'0000'`; float key `0xf9 3c00` equals `0xfa 3f800000` (both `1.0`) under canonical-encoding equality, and `NaN` keys are stable (each NaN key equals itself under canonical encoding); structural keys rejected by default, enabled by a mode flag, and then `[]Value{1,2}` ≠ `[]Value{1,2,0}`.
 
-`order_test.go`: the `Deterministic` comparator is length-first then bytewise; `Canonical` is bytewise only; a specific pair of keys (e.g. `h'ff'` vs `h'00'` — same length, bytewise decides; `h'ff'` vs `h'0000'` — length decides in deterministic, bytewise decides in canonical) pins both.
+`order_test.go`: the `CoreDeterministic` comparator is bytewise lexicographic (RFC 8949 §4.2.1); the `LengthFirst` comparator is length-first then bytewise (RFC 8949 §4.2.3 legacy, the RFC 7049 §3.9 "Canonical CBOR" rule). A specific pair of keys pins both: `h'ff'` vs `h'0000'` — bytewise sorts `h'0000'` first (0x00 < 0xff); length-first sorts `h'ff'` first (shorter). And same-length `h'ff'` vs `h'00'` is bytewise in both.
 
 Run: `go test ./value/`
 Expected: FAIL.
@@ -156,7 +236,7 @@ git commit -m "feat(value): exact value model with fidelity, keys, ordering"
 
 ---
 
-### Task 3: Streaming decoder — `internal/codec`
+### Task 4: Streaming decoder — `internal/codec`
 
 **Files:**
 - Create: `internal/codec/decoder.go` (cursor, head→argument→body machine, limits)
@@ -170,37 +250,41 @@ git commit -m "feat(value): exact value model with fidelity, keys, ordering"
 
 **Step 1: Write the failing decode tests against the RFC vectors**
 
-Commit `testdata/rfc8949/` first (a `testdata` directory inside `internal/codec`): every appendix A item as `(hex bytes, kind, expected value)` triples — definite and indefinite arrays/maps, all integer widths, all float widths, tags, simple values, `break`, reserved `ai` 28–30.
+Commit `testdata/rfc8949/` first (a `testdata` directory inside `internal/codec`): every appendix A item as `(hex bytes, kind, expected value)` triples — definite and indefinite arrays/maps, **indefinite byte/text strings** (`5f … ff`, `7f … ff`), all integer widths **including `3b ffffffffffffffff` → `-18446744073709551616` (`-2^64`)**, all float widths, tags, the **full simple-value space** (`0xe0`–`0xf3` → values 0–19, `0xf8 20` → `simple(32)`, named 20–23, `0xf8` with a payload below 32 → malformed), `break`, reserved `ai` 28–30.
 
-`decoder_test.go`: for each vector, decode and compare against the value-model expectation; `break` outside an indefinite container → `ErrMalformed`; truncated vector → `ErrTruncated`; adapter-mode decode of a non-string-key map → the adapter's error (see Task 9), decode in `Keep`-key mode succeeds with a `Bytes` key.
+`decoder_test.go`: for each vector, decode and compare against the value-model expectation; `break` outside an indefinite container → `ErrMalformed`; truncated vector → `ErrTruncated`; indefinite byte/text decodes to the concatenated bytes/text — bytes raw, text with the **concatenation** validated as UTF-8 (`simd.ValidUTF8` on the result); adapter-mode decode of a non-string-key map → the adapter's error (see Task 10), decode in `Keep`-key mode succeeds with a `Bytes` key.
 
 Run: `go test ./internal/codec/`
 Expected: FAIL (no decoder yet).
 
 **Step 2: Implement the decoder**
 
-Per `docs/lld/decoder.md`, in this order: head→argument (reserved `ai` and `ai 31` rejection), definite containers with pre-flight bounds and presize cap, indefinite containers with the break state machine, tags (`Keep` mode; `Discard` mode is Task 9's adapter), `Limits` enforcement at framing, ownership (borrowed `RawMessage`-shaped accessor, copied string/bytes). Depth default 64. No `float64` widening: values are exact per the value model.
+Per `docs/lld/decoder.md`, in this order: head→argument (reserved `ai` and `ai 31` rejection), definite containers with pre-flight bounds and presize cap, indefinite containers with the break state machine, **indefinite byte/text chunked concatenation with UTF-8 validation of the result**, the full simple-value model (numeric `Simple` values 0–19 and 32–255, named 20–23, `0xf8` with payload < 32 malformed, `break` terminator-only), tags (`Keep` mode; `Discard` mode is Task 10's adapter), `Limits` enforcement at framing, ownership (borrowed `RawMessage`-shaped accessor, copied string/bytes). Depth default 64. No `float64` widening: values are exact per the value model.
 
 **Step 3: Run the tests**
 
 Run: `go test ./internal/codec/`
 Expected: PASS.
 
-**Step 4: Write the failing Skip-parity test**
+**Step 4: Write the failing Skip-parity tests — the Stage 0 assertion work**
 
-`skip_test.go`: property test over generated corpora (reuse the generator pattern from the shipped `skip_test.go`): for every item, `Skip` and the decoder's span agree, and accept/reject agree — including indefinite containers, tags, and arbitrary keys.
+This task lands the corpus and assertion work that Stage 0 (Task 1) deliberately deferred:
 
-Run: `go test ./internal/codec/ -run TestSkipParity`
+- carry the head-byte enumeration test (from Task 1's `skip_test.go`, extended): for every head byte and the `0xf8`+byte form, decoder and `Skip` agree on accept/reject and span;
+- extend the generative corpus (the pattern from the shipped `skip_test.go`) so the generator emits the full simple-value space — values 0–19, `0xf8` forms 32–255, named 20–23 — plus indefinite containers and indefinite byte/text strings;
+- repair the random-bytes loop: **assert** both errors agree (`if (uerr == nil) != (serr == nil) { fail }`) instead of discarding them to `_`.
+
+Run: `go test ./internal/codec/ -run 'TestSkipParity|TestSkipAgreesWithUnmarshalOnEveryHead'`
 Expected: FAIL.
 
 **Step 5: Implement `Skip` on the same machine**
 
-`internal/codec/skip.go` — the build step removed, the framing step shared. This is the shipped invariant (`skip.go`'s doc comment) carried forward: a skip that succeeds is an item the decoder consumes, same span.
+`internal/codec/skip.go` — the build step removed, the framing step shared, accept policy shared by construction with the decoder. This is the shipped invariant, now actually enforced: a skip that succeeds is an item the decoder consumes, same span.
 
 **Step 6: Run the tests**
 
-Run: `go test ./internal/codec/`
-Expected: PASS.
+Run: `go test ./internal/codec/ && go test ./...`
+Expected: PASS, PASS (the shipped suite, including the Task 1 fixes, stays green).
 
 **Step 7: Write the failing streaming tests**
 
@@ -227,12 +311,12 @@ Expected: clean; any finding is a bug — fix it and add the input to the corpus
 
 ```bash
 git add internal/codec/ internal/codec/testdata/
-git commit -m "feat(codec): streaming decoder with indefinite forms, limits, skip parity"
+git commit -m "feat(codec): streaming decoder with indefinite forms, simple values, limits, skip parity"
 ```
 
 ---
 
-### Task 4: Streaming encoder — `internal/codec`
+### Task 5: Streaming encoder — `internal/codec`
 
 **Files:**
 - Create: `internal/codec/encoder.go`
@@ -241,17 +325,21 @@ git commit -m "feat(codec): streaming decoder with indefinite forms, limits, ski
 **Step 1: Write the failing round-trip tests**
 
 `encoder_test.go`:
-- every RFC vector decodes with the Task 3 decoder, encodes, and re-decodes to an equal value;
-- `StartArray(n)`/`EndArray` and indefinite forms emit exactly the documented bytes (`9f ... ff`);
+- every RFC vector decodes with the Task 4 decoder, encodes, and re-decodes to an equal value;
+- `StartArray(n)`/`EndArray` and indefinite forms emit exactly the
+  documented bytes (`9f ... ff`);
+- indefinite byte/text strings (`5f … ff`, `7f … ff`) emit chunk-wise and
+  re-decode to the concatenated value (text: concatenation UTF-8-valid);
 - the container stack rejects: `End` on an empty stack, `EndArray` over a map, overrunning a definite count — before any bytes are written;
-- `WriteTag(55799)` emits `d9 d9f7` then the value; no tag is emitted unless written.
+- `WriteTag(55799)` emits `d9 d9f7` then the value; no tag is emitted unless written;
+- the full simple-value space encodes: `Simple(0)` → `e0`, `Simple(32)` → `f8 20`, named constants → `f4`–`f7`, `break` never emitted by the encoder except via `End*`.
 
 Run: `go test ./internal/codec/ -run TestEncoder`
 Expected: FAIL.
 
 **Step 2: Implement the encoder**
 
-Per `docs/lld/encoder.md`: forward append only, shortest heads, container stack, `WriteTag`, indefinite via explicit `StartIndefinite*`/`End*` (the only `0xff` writers). Float rule for now: adapter-shaped (`float32`-if-round-trips, else `float64`); the `float16` extension arrives with the modes in Task 5.
+Per `docs/lld/encoder.md`: forward append only, shortest heads, container stack, `WriteTag`, indefinite via explicit `StartIndefinite*`/`End*` (the only `0xff` writers), chunk-wise indefinite byte/text emission (`5f`/`7f`) for streamed data, and the same simple-value policy as the decoder. Float rule for now: adapter-shaped (`float32`-if-round-trips, else `float64`); the `float16` extension arrives with the modes in Task 6.
 
 **Step 3: Run the tests**
 
@@ -267,7 +355,7 @@ Expected: FAIL.
 
 **Step 5: Fix to green**
 
-Expected: PASS. Where fxamacker and the design legitimately differ (duplicate policy defaults, tag interpretation), pin the difference with a comment-carrying test — the oracle is the RFC, not fxamacker.
+Expected: PASS. Where fxamacker and the design legitimately differ (duplicate policy defaults, tag interpretation, NaN handling), pin the difference with a comment-carrying test — the oracle is the RFC, not fxamacker.
 
 **Step 6: Commit**
 
@@ -278,7 +366,7 @@ git commit -m "feat(codec): streaming encoder, container stack, fxamacker intero
 
 ---
 
-### Task 5: Canonical and deterministic modes
+### Task 6: Deterministic modes
 
 **Files:**
 - Modify: `internal/codec/encoder.go` (mode plumbing, float16 rule, key ordering)
@@ -289,8 +377,9 @@ git commit -m "feat(codec): streaming encoder, container stack, fxamacker intero
 **Step 1: Write the failing mode tests**
 
 `modes_test.go`:
-- `Deterministic` sorts length-first, bytewise (`h'ff'` before `h'0000'`); `Canonical` sorts bytewise (`h'0000'` before `h'ff'`);
-- deterministic/canonical float rule: `1.0` encodes `f9 3c00`, `1.5` encodes `f9 3e00`, a value that does not round-trip through `float16` encodes `fa`/`fb`; the adapter mode (Task 9) never emits `f9`;
+- mode names are the data-model LLD's, unambiguous: `CoreDeterministic` (RFC 8949 §4.2.1, bytewise) and `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then bytewise);
+- `CoreDeterministic` sorts bytewise (`h'0000'` before `h'ff'`); `LengthFirst` sorts `h'ff'` before `h'0000'` (shorter first);
+- both modes' float rule: `1.0` encodes `f9 3c00`, `1.5` encodes `f9 3e00`, a value that does not round-trip through `float16` encodes `fa`/`fb`; the adapter mode (Task 10) never emits `f9`;
 - duplicate policies: `Error` → `ErrDuplicateKey` on the second canonical-equal key; `FirstWins`/`LastWins` pin their map results; `0xf9 3c00` and `0xfa 3f800000` are the same key under every policy.
 
 Run: `go test ./internal/codec/ -run 'TestModes|TestDuplicates'`
@@ -298,16 +387,24 @@ Expected: FAIL.
 
 **Step 2: Implement modes**
 
-Per the data-model and encoder LLDs: a `Mode` enum on the encoder (adapter/deterministic/canonical) and a `DuplicatePolicy` on the decoder; the float16 forward conversion (the inverse of `halfToFloat32bits` — the decode side already exists in `decode.go`); key ordering via `value/order.go` comparators.
+Per the data-model and encoder LLDs: a `Mode` enum on the encoder (adapter/core-deterministic/length-first) and a `DuplicatePolicy` on the decoder; the float16 forward conversion (the inverse of `halfToFloat32bits` — the decode side already exists in `decode.go`); key ordering via `value/order.go` comparators.
 
 **Step 3: Run the tests**
 
 Run: `go test ./internal/codec/ && go test ./value/`
 Expected: PASS, PASS.
 
-**Step 4: Write the failing profile tests**
+**Step 4: Write the failing profile tests — interop paired correctly**
 
-`modes_test.go`: fxamacker's canonical mode (`cbor.CanonicalEncOptions()`) decodes our `Canonical`-mode bytes, and vice versa; a duplicate-key input decodes under each policy to the documented result/error.
+`modes_test.go`, against the installed fxamacker v2.9.2 (verified against its `encode.go`: `SortCoreDeterministic` = `SortBytewiseLexical`; `SortCanonical` = `SortLengthFirst`):
+
+- `CoreDetEncOptions()` (bytewise) decodes our `CoreDeterministic`-mode bytes, and vice versa;
+- `CanonicalEncOptions()` (length-first — fxamacker's "canonical" is the legacy RFC 7049 §3.9 ordering, not bytewise) decodes our `LengthFirst`-mode bytes, and vice versa;
+- caveat pinned by test: fxamacker's deterministic options also force `ShortestFloat16` and normalize NaN to `0xf97e00` and Inf to float16; our modes preserve NaN payloads per the data-model LLD — the difference is a pinned profile test with the reason in a comment;
+- a duplicate-key input decodes under each policy to the documented result/error.
+
+Run: `go test ./internal/codec/ -run TestProfiles`
+Expected: PASS.
 
 **Step 5: Run and fix to green**
 
@@ -318,12 +415,12 @@ Expected: PASS.
 
 ```bash
 git add internal/codec/
-git commit -m "feat(codec): canonical and deterministic modes, duplicate policies"
+git commit -m "feat(codec): core-deterministic and length-first modes, duplicate policies"
 ```
 
 ---
 
-### Task 6: Tags
+### Task 7: Tags
 
 **Files:**
 - Modify: `internal/codec/decoder.go`, `internal/codec/encoder.go` (interpret mode)
@@ -333,16 +430,16 @@ git commit -m "feat(codec): canonical and deterministic modes, duplicate policie
 **Step 1: Write the failing tag tests**
 
 `tags_test.go`:
-- `Keep` mode: `c0 78 18 ...` decodes to `Tag{0, Text}` and re-encodes to the same bytes;
+- `Keep` mode: `c0 74` + the 20-byte date-time string decodes to `Tag{0, Text}` and re-encodes to the same bytes;
 - `Interpret` mode (opt-in): tags 0/1/2/3/4/5/32/33/34/36/55799 map to the documented native forms (epoch float, bignum via `math/big`, etc.); unknown tags stay generic;
-- adapter mode (`Discard`) is Task 9's behavior, pinned here as the mode's default off.
+- adapter mode (`Discard`) is Task 10's behavior, pinned here as the mode's default off.
 
 Run: `go test ./internal/codec/ -run TestTags`
 Expected: FAIL.
 
 **Step 2: Implement tag modes**
 
-Generic `Tag` storage already exists from Task 2/3; this task adds the interpret table and the mode plumbing. YAGNI: only the tags listed in the data-model LLD get native forms.
+Generic `Tag` storage already exists from Task 3/4; this task adds the interpret table and the mode plumbing. YAGNI: only the tags listed in the data-model LLD get native forms.
 
 **Step 3: Run the tests**
 
@@ -358,7 +455,7 @@ git commit -m "feat(codec): tag keep/interpret modes"
 
 ---
 
-### Task 7: Lazy values
+### Task 8: Lazy values
 
 **Files:**
 - Modify: `internal/codec/decoder.go` (range framing, pin-copy mode)
@@ -378,7 +475,7 @@ Expected: FAIL.
 
 **Step 2: Implement lazy framing**
 
-Per `docs/lld/streaming-lazy-and-diagnostic.md`. The frame pass is the Task 3 machine with the build step replaced by range capture.
+Per `docs/lld/streaming-lazy-and-diagnostic.md`. The frame pass is the Task 4 machine with the build step replaced by range capture.
 
 **Step 3: Run the tests**
 
@@ -399,7 +496,7 @@ git commit -m "feat(codec): lazy values as framed byte ranges"
 
 ---
 
-### Task 8: Diagnostic notation — `simdcbor/diag`
+### Task 9: Diagnostic notation — `simdcbor/diag`
 
 **Files:**
 - Create: `diag/diag.go` (render)
@@ -409,7 +506,7 @@ git commit -m "feat(codec): lazy values as framed byte ranges"
 
 **Step 1: Write the failing notation tests**
 
-`diag_test.go`, per the LLD table: `00`→`0`, `20`→`-1`, `40 01 02`→`h'0102'`, `61 61`→`"a"`, `f4`/`f5`/`f6`/`f7`, `f9 3c00`→`1.0`, `e0`→`simple(0)`, `80`, `9f 00 ff`→`[_ 0]`, `bf ... ff`→`{_ ...}`, `c0 ...`→`0("...")`, floats as shortest round-tripping decimal, `nan`/`infinity`/`-infinity`. Parse side round-trips through the value model. Error-prefix rendering: a truncated item renders the well-formed prefix in notation.
+`diag_test.go`, per the LLD table (exact wire examples): `00`→`0`, `20`→`-1`, `3b ffffffffffffffff`→`-18446744073709551616`, `42 01 02`→`h'0102'` (the head is `0x42`, length 2 — not `0x40`), `61 61`→`"a"`, `f4`/`f5`/`f6`/`f7`, `f9 3c00`→`1.0`, `e0`→`simple(0)`, `f8 20`→`simple(32)`, `80`, `9f 00 ff`→`[_ 0]`, `5f 42 01 02 ff`→`(_ h'0102')`, `7f 61 61 61 62 ff`→`(_ "ab")`, `bf ... ff`→`{_ ...}`, and `c0 74 32 30 31 33 2d 30 33 2d 32 31 54 32 30 3a 30 34 3a 30 30 5a`→`0("2013-03-21T20:04:00Z")` (tag 0 of the 20-byte date-time string — `0x74`, not `0x78 0x18`). Floats render as shortest round-tripping decimal, `nan`/`infinity`/`-infinity` by name. Parse side round-trips through the value model. Error-prefix rendering: a truncated item renders the well-formed prefix in notation.
 
 Run: `go test ./diag/`
 Expected: FAIL.
@@ -432,7 +529,7 @@ git commit -m "feat(diag): RFC 8949 diagnostic notation render and parse"
 
 ---
 
-### Task 9: Adapter — the shipped API over the new core
+### Task 10: Adapter — the shipped API over the new core
 
 **Files:**
 - Modify: `decode.go`, `encode.go`, `skip.go` (reimplement as adapters over `internal/codec`)
@@ -444,7 +541,7 @@ git commit -m "feat(diag): RFC 8949 diagnostic notation render and parse"
 `adapter_test.go`:
 - **byte identity**: on the shipped corpus, `Marshal` produces the exact bytes the pre-adapter encoder produced (snapshot a corpus of encoded outputs into `testdata/adapter/` at this task's start, before reimplementing);
 - **shape identity**: `Unmarshal` returns the JSON shapes (`map[string]any`/`[]any`/`float64`), tags discarded, duplicates last-wins, depth 64 → `ErrMalformed`, non-string key → `ErrMalformed`, `undefined` → `nil`;
-- **boundary parity**: `Skip` and `Unmarshal` agree on accept/reject and span on the new core, exactly as the shipped `TestSkipMatchesUnmarshal` asserts;
+- **boundary parity**: `Skip` and `Unmarshal` agree on accept/reject and span on the new core — the head-byte enumeration test and the asserted random-input loop (Tasks 1 and 4) keep this true by construction; the Stage 0 divergence must not reappear;
 - the shipped `decode_test.go`/`encode_test.go`/`skip_test.go` files pass **without modification**.
 
 Run: `go test ./...`
@@ -452,7 +549,7 @@ Expected: FAIL where the adapter does not yet exist.
 
 **Step 2: Reimplement the root package as the adapter**
 
-`Unmarshal` → configure the new decoder with adapter mode (JSON shapes, `float64` conversion via the value model's `AsFloat64`, `Discard` tags, `LastWins`, depth 64 with `ErrDepth`→`ErrMalformed` mapping, `ErrLimit`/`ErrUnsupportedKey`→`ErrMalformed`), decode one item, return `(value, n, err)`. `Marshal` → adapter mode encoder, byte-identical output (including: no `float16`, `NaN` as `fb` double, `uint` still unsupported, `[]byte`→bytes, sorted bytewise). `Skip` → the new core's skip with adapter limits. The two error values stay the only exported errors from the root package.
+`Unmarshal` → configure the new decoder with adapter mode (JSON shapes, `float64` conversion via the value model's `AsFloat64`, `Discard` tags, `LastWins`, depth 64 with `ErrDepth`→`ErrMalformed` mapping, `ErrLimit`/`ErrUnsupportedKey`→`ErrMalformed`, simple values outside the JSON shape rejected — consistent with `Skip`, per Stage 0). `Marshal` → adapter mode encoder, byte-identical output (including: no `float16`, `NaN` as `fb` double, `uint` still unsupported, `[]byte`→bytes, sorted bytewise). `Skip` → the new core's skip with adapter limits. The two error values stay the only exported errors from the root package.
 
 **Step 3: Run the full suite**
 
@@ -473,12 +570,12 @@ git commit -m "refactor: shipped API as explicit adapter over the full codec"
 
 ---
 
-### Task 10: Final gates and records
+### Task 11: Final gates and records
 
 **Files:**
-- Modify: `README.md` (shipped API + subset unchanged; add links to the new packages and docs)
+- Modify: `README.md` (shipped API + subset unchanged; add links to the new packages and docs; the Skip caveat becomes "resolved in Stage 0")
 - Modify: `docs/verification.md` (mark the full-codec gates as live)
-- Modify: `docs/wrong.md` (add any measurements this work produced)
+- Modify: `docs/wrong.md` (add any measurements this work produced; close the Skip-divergence entry)
 
 **Step 1: Full gate run**
 
@@ -494,6 +591,7 @@ GOARCH=arm64 go build ./... && GOARCH=arm64 go test ./...
 GOARCH=386 go build ./... && GOARCH=386 go test ./...
 GOARCH=ppc64le go build ./... && GOARCH=ppc64le go test ./...
 make bench
+make bench-check   # now pipefail-safe after Task 2
 ```
 
 Expected: all green. Any failure stops the task.
@@ -513,7 +611,7 @@ Run: `GOARCH=ppc64le go test -race ./...` (if the toolchain supports it; else do
 
 **Step 5: Documentation updates**
 
-`README.md`: shipped API section unchanged in substance; add links to `simdcbor/value`, `simdcbor/diag`, `internal/codec` docs, and the design/plan. `docs/verification.md`: move the full-codec gates from target to live. `docs/wrong.md`: the lazy-value measurement from Task 7 and any other sourced findings. Check every internal link resolves.
+`README.md`: shipped API section unchanged in substance; add links to `simdcbor/value`, `simdcbor/diag`, `internal/codec` docs, and the design/plan; the Skip simple-value caveat sentence is replaced by the Stage 0 resolution. `docs/verification.md`: move the full-codec gates from target to live. `docs/wrong.md`: close the Skip-divergence entry with its resolution, add the lazy-value measurement from Task 8 and any other sourced findings. Check every internal link resolves.
 
 **Step 6: Commit**
 

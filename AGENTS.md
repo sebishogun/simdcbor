@@ -5,8 +5,8 @@
 `simdcbor` is a CBOR (RFC 8949) codec built on the two-stage architecture
 of [simd](https://github.com/sebishogun/simd): a first pass over head bytes
 finds where every item begins, then a walk builds Go values from that index.
-Homogeneous runs (copying a byte string, validating UTF-8) go through simd's
-kernels.
+The only simd kernel in use is `ValidUTF8` for text strings; byte-string
+copies are plain memmoves.
 
 **Shipped scope today is the JSON-shaped subset**, not the full RFC:
 
@@ -20,8 +20,11 @@ kernels.
 
 Gaps (all deliberate, all documented): string map keys only, numbers as
 `float64`, depth cap 64, indefinite forms rejected, tags discarded, duplicate
-keys last-wins, a restricted marshal type set. There is **no full RFC 8949
-claim** anywhere in this repository.
+keys last-wins, a restricted marshal type set. One gap is a known bug, not a
+decision: `Skip` accepts simple values `0`–`19` and the `0xf8` form that
+`Unmarshal` rejects with `ErrMalformed` — do not claim Skip/Unmarshal parity
+(see `docs/wrong.md`; scheduled as Stage 0 of the production plan). There is
+**no full RFC 8949 claim** anywhere in this repository.
 
 The approved target — a full RFC 8949 codec with streaming, tags, arbitrary
 keys, canonical/deterministic modes, lazy values, and diagnostic notation —
@@ -47,8 +50,12 @@ encoder, and streaming/lazy/diagnostic designs.
 make test        # go test ./...
 make vet         # gofmt -l . ; go vet ./...
 make bench       # one process, shuffled, count=6, minimum — the numbers the README quotes
-make bench-check # same, tee'd to /tmp/simdcbor-bench.txt, 8% floor
+make bench-check # tee'd to /tmp/simdcbor-bench.txt; pipes without pipefail, so NOT a reliable gate alone
 ```
+
+`bench-check`'s pipe launders a failing `go test` into a green exit unless
+run under `set -o pipefail`; a later code task fixes the Makefile
+(roadmap Phase 1). Treat it as informational until then.
 
 ## Rules that cost real time when skipped
 

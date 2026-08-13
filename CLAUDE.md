@@ -12,6 +12,14 @@ code change silently widen or narrow the subset without updating the
 README, `docs/wrong.md` where it argues against a change, and the tests
 that pin the subset.
 
+One shipped inconsistency is a known bug, not a decision: `Skip` accepts
+simple values `0`–`19` and the `0xf8` form that `Unmarshal` rejects with
+`ErrMalformed`. Never claim Skip/Unmarshal parity — the shipped
+`TestSkipMatchesUnmarshal` cannot see it (the corpus never generates
+those simple values; the random-bytes loop discards both errors). The
+divergence is recorded in `docs/wrong.md` and scheduled as Stage 0 of the
+production plan.
+
 ## Disassemble first, always
 
 Before proposing a cause for anything slow, before writing a variant,
@@ -43,6 +51,8 @@ minimum, never across sessions. Machine quiet, load average under 1.
 **Never pipe a gate through `tail`** (or anything else) without
 `pipefail`: the pipe reports the last command's status and a red run
 launders into a green exit. Run gates bare, or `set -o pipefail` first.
+`make bench-check` is itself such a pipe (through `tee`, no `pipefail`) —
+not a reliable gate on its own; a later code task fixes the Makefile.
 
 ## The record
 

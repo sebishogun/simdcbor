@@ -41,13 +41,13 @@ shipped encoder would have produced.
 ## Heads and shortest forms
 
 `appendHead` generalizes unchanged: `arg < 24` inline, then
-`24`/`25`/`26`/`27` for 1/2/4/8 bytes. Under `Deterministic`/`Canonical`
-modes the float rule extends:
+`24`/`25`/`26`/`27` for 1/2/4/8 bytes. Under `CoreDeterministic`/
+`LengthFirst` modes the float rule extends:
 
 - adapter mode (shipped): `float32` iff `float64(float32(f)) == f`, else
   `float64`; never `float16`; `NaN` always `float64` (it never round-trips
   through `float32`);
-- deterministic/canonical modes: `float16` iff
+- `CoreDeterministic`/`LengthFirst` modes: `float16` iff
   `float64(float16(f)) == f`, then `float32`, then `float64`. `float16`
   conversion is the RFC-prescribed shortest form (already implemented as
   `halfToFloat32bits`'s inverse in decode; the encoder needs the forward
@@ -58,17 +58,28 @@ modes the float rule extends:
 
 ## Map key ordering
 
-The shipped encoder sorts `map[string]any` keys with `sort.Strings`
-(bytewise) — that is the `Canonical` ordering for the text-key subset.
-The new encoder:
+Mode names are the data-model LLD's, unambiguous:
 
-- `Canonical` mode: bytewise over the canonical wire encoding of each key
-  (data-model LLD: shortest head, shortest float), so non-text keys order
-  by their bytes, matching CTAP2;
-- `Deterministic` mode: length-first, then bytewise (RFC 8949 §4.2.1);
-- adapter mode: exactly `sort.Strings` on the text keys, whatever the
-  underlying value layer does — the adapter sorts before encoding, as
+- `CoreDeterministic` (RFC 8949 §4.2.1): **bytewise** lexicographic order
+  over the canonical wire encoding of each key (data-model LLD: shortest
+  head, shortest float), so non-text keys order by their bytes;
+- `LengthFirst` (RFC 8949 §4.2.3, legacy): **length first, then
+  bytewise** — the RFC 7049 §3.9 "Canonical CBOR" rule;
+- adapter mode: exactly `sort.Strings` on the text keys — which is
+  `CoreDeterministic`'s key rule for the text-key subset — whatever the
+  underlying value layer does; the adapter sorts before encoding, as
   today.
+
+Interop pairing against fxamacker/cbor v2.9.2 (verified against its
+source, `encode.go`): `CoreDetEncOptions()` (`SortCoreDeterministic` =
+`SortBytewiseLexical`) pairs with `CoreDeterministic`; `CanonicalEncOptions()`
+(`SortCanonical` = `SortLengthFirst`) pairs with `LengthFirst`. The
+"canonical" name in fxamacker is the legacy length-first ordering, not
+bytewise — pairing `CanonicalEncOptions` with a bytewise mode would be
+wrong. Caveat: fxamacker's deterministic options also force
+`ShortestFloat16` and normalize NaN to `0xf97e00` and Inf to float16;
+profile tests pin the key-sorting rule specifically and pin the float/NaN
+differences by test — the oracle is the RFC, not fxamacker.
 
 Sorting is stable and happens before any head is written, so a map is
 always emitted as one contiguous run with no reordering after the fact.
@@ -83,10 +94,14 @@ encoder option); the adapter never emits it, matching shipped bytes.
 ## Indefinite forms
 
 `StartIndefiniteArray`/`StartIndefiniteMap` write the `ai 31` head;
-`EndArray`/`EndMap` write `0xff`. A `break` is written only by `End*`, so
-an indefinite container left unterminated is a caller bug caught by the
-encoder's container stack (see below) — the encoder never emits a
-stray `0xff`.
+`EndArray`/`EndMap` write `0xff`. Indefinite byte/text strings (`5f`/`7f`)
+can be emitted chunk-wise — the indefinite head, definite chunks, then a
+`0xff` — for data whose length is unknown ahead of time; the value
+model's `Bytes`/`Text` are definite, so chunk emission is a streaming
+form, and the adapter never emits it. A `break` is written only by
+`End*`, so an indefinite container left unterminated is a caller bug
+caught by the encoder's container stack (see below) — the encoder never
+emits a stray `0xff`.
 
 ## Container stack
 

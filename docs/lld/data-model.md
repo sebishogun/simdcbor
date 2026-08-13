@@ -14,27 +14,47 @@ set is the RFC 8949 type lattice, with wire fidelity preserved:
 | kind | wire | Go representation |
 |---|---|---|
 | `Uint` | major 0 | `uint64` |
-| `NegInt` | major 1 | `int64` (value `-1-n`) |
+| `NegInt` | major 1 | `uint64` magnitude `n`; mathematical value `-1-n`, range `-1`..`-2^64` |
 | `Bytes` | major 2 | `[]byte` |
 | `Text` | major 3 | `string` |
 | `Array` | major 4 | `[]Value` |
 | `Map` | major 5 | `[]KeyValue` (ordered) |
 | `Tag` | major 6 | `Tag{Number uint64, Value Value}` |
-| `Simple` | major 7, `ai` < 24 | `Simple(uint8)` — `false`, `true`, `null`, `undefined` are the four named constants, all other `Simple` values carry their number |
+| `Simple` | major 7 | `Simple(uint8)` — values `0`–`19` (short form `0xe0`–`0xf3`) and `32`–`255` (two-byte `0xf8` + byte); `false`/`true`/`null`/`undefined` are the four named constants; `24`–`31` reserved |
 | `Float16` | `0xf9` | `Float16` as raw `uint16` bits |
 | `Float32` | `0xfa` | raw `uint32` bits |
 | `Float64` | `0xfb` | `float64` (bits preserved through `math.Float64bits`) |
 
+The simple-value space is split deliberately, not one undifferentiated
+number:
+
+- `false` (20), `true` (21), `null` (22), `undefined` (23) are the four
+  **named constants** — separate from the numeric `Simple` kind, because
+  they are the values JSON-shaped consumers can actually map;
+- `Simple` carries the numeric values `0`–`19` (short form `0xe0`–`0xf3`)
+  and `32`–`255` (two-byte form `0xf8` + byte). The two-byte form with a
+  value below 32 is malformed: `0`–`23` must use the short form and
+  `24`–`31` are reserved;
+- `ai 31` — the `break` byte — is **not** a simple value at all: it is
+  reserved as the terminator of indefinite containers and, as a
+  standalone item head, is malformed.
+
 **Fidelity rules:**
 
 - integers are **never** widened or narrowed by the value layer: `Uint`
-  is exact to `2^64-1`, `NegInt` exact to `-2^63`. Conversion to `float64`
+  is exact to `2^64-1`; `NegInt` stores the encoded argument/magnitude
+  `n` as `uint64`, exact over the full CBOR negative-integer range
+  `-1`..`-2^64` (the endpoint `-2^64`, `n = 2^64-1`, is not representable
+  as `int64` — conversions to `int64`/`float64` are explicit, documented
+  operations, and the adapter's `float64` path is `-1 - float64(n)`,
+  exactly as the shipped decoder computes it). Conversion to `float64`
   is an explicit, lossy, documented operation (the adapter's job), exactly
   as `encoding/json` treats numbers;
 - `Float16`/`Float32`/`Float64` are distinct kinds that preserve the wire
   bits: NaN payloads, signaling bits, and `-0.0` survive decode and
   round-trip. A `0xf9` item is a `Float16`, not "a float64 that happens to
-  be small";
+  be small". (The shipped decoder collapses all three widths to `float64`;
+  the distinct kinds are target behavior.)
 - `Bytes` is a byte string; the decoder keeps the bytes as read. Text is
   validated UTF-8 (existing `simd.ValidUTF8` path); invalid UTF-8 is a
   decode error, never a silent replacement.
@@ -94,23 +114,25 @@ property. Canonical-equal means canonical-encoding-equal (see keys above):
 `0xf9 3c00` and `0xfa 3f800000` are the same key `1.0` under every
 policy.
 
-## Deterministic and canonical ordering
+## Deterministic ordering (CoreDeterministic and LengthFirst)
 
-Two orderings, one comparator, two modes. Keys are compared by their
-**canonical wire encodings** (shortest head, shortest float — never
-layout-dependent):
+Two orderings, one comparator, two modes, named unambiguously. Keys are
+compared by their **canonical wire encodings** (shortest head, shortest
+float — never layout-dependent):
 
-- `Deterministic` (RFC 8949 §4.2.1 core deterministic): sort by **encoded
-  length first**, then bytewise. This is what the RFC calls
-  deterministic; it is length-sensitive by construction.
-- `Canonical` (CTAP2-style, the common "canonical CBOR"): sort **bytewise
-  only**.
+- `CoreDeterministic` (RFC 8949 §4.2.1): sort **bytewise** in
+  lexicographic order of the encoded keys. This is the RFC's core
+  deterministic key rule.
+- `LengthFirst` (RFC 8949 §4.2.3, the legacy "length-first core
+  deterministic"): sort by **encoded length first**, then bytewise —
+  shorter keys sort earlier, ties broken lexicographically. This is the
+  RFC 7049 §3.9 "Canonical CBOR" rule.
 
 The current `Marshal` sorts Go string keys bytewise with `sort.Strings` —
-that matches `Canonical` for the text-key subset and does **not** match
-`Deterministic`. The shipped claim ("same map, same bytes") survives
-either; the RFC's length-first ordering does not exist yet and will
-arrive with the modes. No ordering applies inside `Array` (order is
+that matches `CoreDeterministic`'s key rule for the text-key subset and
+does **not** match `LengthFirst`. The shipped claim ("same map, same
+bytes") survives either; the length-first ordering does not exist yet and
+will arrive with the modes. No ordering applies inside `Array` (order is
 data).
 
 ## Shortest forms
@@ -120,10 +142,11 @@ inline, then `24`/`25`/`26`/`27`). The value layer's encoder extends
 shortest-form to numbers under the deterministic/canonical modes:
 
 - integers: shortest head for the magnitude (`0`–`23` inline, `uint8`,
-  `uint16`, `uint32`, `uint64` / the negint mirror);
+  `uint16`, `uint32`, `uint64` / the negint magnitude mirror);
 - floats: prefer `Float16` when `float64(float16(f)) == f`, then
   `Float32`, then `Float64` — the shipped encoder stops at `Float32` and
-  never emits `0xf9`, so shortest-form floats change with the modes;
+  never emits `0xf9`, so shortest-form floats change with the
+  `CoreDeterministic`/`LengthFirst` modes;
 - bytes/text heads: shortest for the length, as today.
 
 Shortest form is a wire concern; the value model never collapses `Float32`

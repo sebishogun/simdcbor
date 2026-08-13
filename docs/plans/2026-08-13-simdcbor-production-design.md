@@ -25,6 +25,11 @@ Shipped today (the exact set, from the source):
 - JSON-shaped decode: `map[string]any`, `[]any`, `float64`, string keys
   only, tags discarded, indefinite rejected, duplicate keys last-wins,
   depth cap 64, invalid UTF-8 and non-string keys `ErrMalformed`;
+- simple values: `false`/`true`/`null` decode (`undefined`→`nil`), floats
+  25–27 → `float64`; simple values 0–19 and the `0xf8` form are rejected
+  by `Unmarshal` but **accepted by `Skip`** — a known parity bug, closed
+  by Stage 0 of the plan (accept sets become policy-driven; the full
+  simple-value model is the end state);
 - marshal type set: `nil`, `bool`, `string`, `[]byte`, `float64`,
   `float32`, `int`, `int64`, `uint64`, `[]any`, `map[string]any` (no
   `uint`); sorted keys bytewise, shortest heads, `float32`-if-round-trips,
@@ -54,18 +59,24 @@ See `docs/lld/data-model.md`. The load-bearing decisions:
 
 - kinds for every major/simple/float type, wire bits preserved
   (`Float16`/`Float32`/`Float64` as distinct kinds, NaN payloads intact,
-  integers exact — `float64` conversion is the adapter's explicit
-  lossy step, as in `encoding/json`);
+  integers exact — `NegInt` over the full CBOR range `-1`..`-2^64` via
+  its `uint64` magnitude, since the `-2^64` endpoint is not an `int64`;
+  `float64` conversion is the adapter's explicit lossy step, as in
+  `encoding/json`);
 - tags as `Tag{Number, Value}`, generic by default, interpret mode for
   the well-known set behind opt-in;
 - maps as ordered `[]KeyValue`; keys comparable in Go directly,
   comparable-by-canonical-encoding for bytes/floats (NaN-safe), and
   structural keys (arrays/maps as keys) rejected by default with an
-  opt-in canonical-encoding hash;
+  opt-in canonical-encoding hash; the full simple-value space — numeric
+  values 0–19 (short form) and 32–255 (`0xf8` form), the named
+  `false`/`true`/`null`/`undefined`, `break` reserved as the indefinite
+  terminator only;
 - duplicate policies `LastWins` (adapter) / `FirstWins` / `Error`;
-- orderings `Deterministic` (RFC 8949 §4.2.1, length-first) and
-  `Canonical` (CTAP2, bytewise) — the shipped bytewise
-  `sort.Strings` behavior becomes the adapter's fixed mode;
+- orderings `CoreDeterministic` (RFC 8949 §4.2.1, bytewise) and
+  `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then bytewise) —
+  the shipped bytewise `sort.Strings` behavior becomes the adapter's
+  fixed mode (it is the core-deterministic key rule for text keys);
 - shortest forms: heads as today, floats extended to `float16` under the
   modes (the adapter stays at `float32`-then-`float64`, never `0xf9`).
 
@@ -87,7 +98,8 @@ See `docs/lld/decoder.md`, `docs/lld/encoder.md`,
 - adapter: `Unmarshal`/`Marshal`/`Skip` map onto the core with the
   adapter's fixed mode and error mapping (`ErrDepth`/`ErrLimit`/
   `ErrUnsupportedKey` → `ErrMalformed`), so the shipped reject boundary
-  is preserved exactly.
+  is preserved exactly — and made consistent between `Unmarshal` and
+  `Skip` by Stage 0.
 
 ## Security posture
 
@@ -99,17 +111,20 @@ fuzzing). Limits are enforced at the framing step, not at build.
 
 ## Roadmap mapping
 
-Safety hardening → value model → streaming decoder → streaming encoder →
-canonical/deterministic modes → tags → lazy values → diagnostic
-notation, each phase ending green on the full existing suite plus its new
-gates, and any measurement that argues against a phase landing in
-`docs/wrong.md`. Full ordering and exit criteria: `docs/roadmap.md`.
+Skip/Unmarshal consistency (Stage 0) → safety hardening → value model →
+streaming decoder → streaming encoder → deterministic modes → tags →
+lazy values → diagnostic notation, each phase ending green on the full
+existing suite plus its new gates, and any measurement that argues
+against a phase landing in `docs/wrong.md`. Full ordering and exit
+criteria: `docs/roadmap.md`.
 
 ## Verification design
 
 `docs/verification.md` gates: RFC 8949 appendix A vectors as committed
-testdata, fxamacker interop both directions across modes, duplicate/
-canonical profile tests, fuzz under `-race` with a seeded corpus, race
+testdata, fxamacker interop both directions across modes (paired
+correctly: `CoreDetEncOptions` for the bytewise mode, `CanonicalEncOptions`
+for the legacy length-first mode), duplicate-policy and deterministic-mode
+profile tests, fuzz under `-race` with a seeded corpus, race
 and cross-arch (`arm64`, `386`, a big-endian build), the benchmark rules
 (one process, shuffled, minimum of ≥3, 8.3% floor, `perf stat
 instructions:u,cycles:u` for sub-floor claims, disassembly citations),
