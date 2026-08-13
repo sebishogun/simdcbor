@@ -151,14 +151,32 @@ all 256 head bytes and all 256 two-byte simple payloads, and a fuzz that
 asserts accept-parity and span-parity on every prefix of arbitrary input
 (20.5M executions clean after the fourth fix).
 
-What is not yet measured is the cost. `Skip` was described as pure
-arithmetic, and UTF-8 validation is a scan of the string it is skipping
-past — on text-heavy data that is real work the previous `Skip` never did.
-The machine has not been quiet enough this session to measure it. If it
-proves expensive, the alternative is a different contract rather than a
-different implementation: `Skip` guarantees framing, `Unmarshal`
-guarantees representability, and the fuzz asserts one direction instead of
-two. That choice is open; this entry is where it starts.
+**Measured, and it decided the design.** Instructions retired on
+`BenchmarkFilterStream/skip-then-decode-1pct`, three interleaved runs of
+each build, spread under 0.05% — a load-independent metric, which is what
+made it usable on a machine that was not quiet:
+
+    Skip, framing only (before)                  757.7 M
+    + value-model checks, no UTF-8 validation    833.8 M   +10.0%
+    + UTF-8 validation                         1,458.5 M   +92.5%
+
+Cycles moved with it: 137 M to 274 M. The identical boundary nearly
+doubles the cost of the operation whose entire purpose is to be the cheap
+arm of a filter, and three quarters of that is validating the contents of
+strings the caller is discarding unread.
+
+So the contract splits rather than the implementation. `Skip` judges
+framing and accepts a superset of what `Unmarshal` does. `SkipStrict`
+carries the identical boundary for callers that need it — the adapter's
+case, which is what Stage 0 was protecting. The fuzz asserts both: exact
+parity for `SkipStrict`, one direction for `Skip`.
+
+`Skip` lands at 790.5 M, **+4.3%** over the original, and that residual is
+the `strict` flag threaded through the recursion: the frame grows from 80
+to 96 bytes and the function from 306 to 377 instructions. Duplicating the
+traversal into two functions would recover it and was not done. One
+boundary with two implementations is the failure this family keeps
+finding, and 4.3% is not worth buying that risk.
 
 ## The plan's example for the two deterministic orders was the mistake it warns about
 

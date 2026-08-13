@@ -105,17 +105,29 @@ strings. The byte-string copy is a runtime memmove, not a simd kernel.
 ## Skip
 
 `Skip` is the same recursion with the build step removed: frame the head,
-walk lengths. It allocates nothing. The intended contract is that the
-accept/reject boundary is identical to `Unmarshal`'s — a `Skip` that
-succeeds is an item `Unmarshal` would decode, with the same span.
+walk lengths. It allocates nothing.
 
-**That contract is currently violated.** `skip.go` accepts every simple
-value the head allows — major 7, `ai` 0–19 (`0xe0`–`0xf3`) and the
-two-byte `0xf8` form — while `decode.go` rejects those bytes with
-`ErrMalformed`, so a `Skip` can succeed where `Unmarshal` refuses. The
-test that claims to enforce parity cannot see it: the generated corpus
-never produces those simple values, and the random-bytes loop discards
-both errors. The divergence is recorded in `docs/wrong.md` and scheduled
+There are two arms, and the split is a measurement rather than a taste.
+`Skip` judges **framing** — the head is a head, the lengths fit, the
+nesting closes — and therefore accepts a superset of what `Unmarshal`
+does: an integer map key, a simple value outside the value model, a text
+string that is not valid UTF-8. `SkipStrict` carries the **identical
+boundary**: a `SkipStrict` that succeeds is an item `Unmarshal` would
+decode, with the same span.
+
+Making `Skip` itself carry the identical boundary costs +92.5%
+instructions on the filter benchmark, three quarters of it validating the
+contents of strings the caller is discarding. `docs/wrong.md` has the
+numbers.
+
+**History.** `Skip` used to claim the identical boundary and not have it.
+It accepted every simple value the head allows — major 7, `ai` 0–19
+(`0xe0`–`0xf3`) and the two-byte `0xf8` form — while `decode.go` rejects
+those bytes, and the fuzz written to check that found three more classes:
+byte-string map keys, tagged string keys, and invalid UTF-8. The test that
+claimed to enforce parity could not see any of it: the generated corpus
+never produced those values, and the random-bytes loop discarded both
+errors. Recorded in `docs/wrong.md` and scheduled
 as Stage 0 of the production plan; the fix direction is policy-driven
 accept sets (the full simple-value model) rather than letting the two
 paths silently diverge. Depth cap is the same 64.

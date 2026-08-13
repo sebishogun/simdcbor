@@ -67,7 +67,7 @@ func TestSkipAgreesWithUnmarshalOnEveryHead(t *testing.T) {
 	for h := 0; h < 256; h++ {
 		b := []byte{byte(h), 0, 0, 0, 0, 0, 0, 0, 0, 0}
 		_, un, uerr := Unmarshal(b)
-		sn, serr := Skip(b)
+		sn, serr := SkipStrict(b)
 		if (uerr == nil) != (serr == nil) {
 			t.Errorf("head %02x: unmarshal err=%v, skip err=%v", h, uerr, serr)
 			continue
@@ -80,7 +80,7 @@ func TestSkipAgreesWithUnmarshalOnEveryHead(t *testing.T) {
 	for p := 0; p < 256; p++ {
 		b := []byte{0xf8, byte(p), 0}
 		_, un, uerr := Unmarshal(b)
-		sn, serr := Skip(b)
+		sn, serr := SkipStrict(b)
 		if (uerr == nil) != (serr == nil) {
 			t.Errorf("f8 %02x: unmarshal err=%v, skip err=%v", p, uerr, serr)
 			continue
@@ -88,5 +88,48 @@ func TestSkipAgreesWithUnmarshalOnEveryHead(t *testing.T) {
 		if uerr == nil && sn != un {
 			t.Errorf("f8 %02x: skip span %d, unmarshal consumed %d", p, sn, un)
 		}
+	}
+}
+
+// Skip judges framing, so it accepts a superset of what Unmarshal does. The
+// direction is the contract: everything Unmarshal accepts, Skip accepts with
+// the same span. The reverse does not hold, and the cases below are why -- each
+// is well-formed CBOR that this value model cannot represent.
+func TestSkipAcceptsASupersetOfUnmarshal(t *testing.T) {
+	for h := 0; h < 256; h++ {
+		b := []byte{byte(h), 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		_, un, uerr := Unmarshal(b)
+		sn, serr := Skip(b)
+		if uerr == nil {
+			if serr != nil {
+				t.Errorf("head %02x: Unmarshal decoded it, Skip refused: %v", h, serr)
+				continue
+			}
+			if sn != un {
+				t.Errorf("head %02x: span %d, consumed %d", h, sn, un)
+			}
+		}
+	}
+	// The four classes Skip takes and Unmarshal does not, all well-formed.
+	for _, c := range []struct {
+		name string
+		b    []byte
+	}{
+		{"simple 0", []byte{0xe0}},
+		{"two-byte simple", []byte{0xf8, 0x20}},
+		{"integer map key", []byte{0xa1, 0x00, 0x00}},
+		{"invalid UTF-8 in text", []byte{0x61, 0xcd}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := Skip(c.b); err != nil {
+				t.Fatalf("Skip refused well-formed CBOR: %v", err)
+			}
+			if _, err := SkipStrict(c.b); err == nil {
+				t.Fatal("SkipStrict accepted what Unmarshal rejects")
+			}
+			if _, _, err := Unmarshal(c.b); err == nil {
+				t.Fatal("Unmarshal accepted it; this case no longer separates the two arms")
+			}
+		})
 	}
 }

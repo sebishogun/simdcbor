@@ -9,18 +9,35 @@ import "github.com/sebishogun/simd"
 // arithmetic: a string skips its byte count, a container skips its
 // declared number of items, no allocation and no per-value interface.
 //
-// Errors are ErrTruncated for a short buffer and ErrMalformed for a head
-// that cannot begin an item; the accept/reject boundary is identical to
-// Unmarshal's, so a Skip that succeeds is an item Unmarshal would decode.
+// Errors are ErrTruncated for a short buffer and ErrMalformed for a head that
+// cannot begin an item. Skip judges framing: the head is a head, the lengths
+// fit, the nesting closes. It does not judge whether the item is one this
+// package's value model can represent, so it accepts a superset of what
+// Unmarshal does -- an integer map key, a simple value outside the model, a
+// text string that is not valid UTF-8.
 //
-// That last sentence used to be false in two places, which is why the
-// boundary is now enforced here rather than assumed: simple values 0-19 and
-// the two-byte 0xf8 form were skipped but not decodable, and a map with a
-// non-text key was skipped while Unmarshal rejects it (the shipped value
-// model is map[string]any). Both are the shipped subset's limits, not CBOR's;
-// when the value model grows to the full space, both paths widen together.
+// That split is measured, not assumed. Skip once claimed the identical
+// boundary, and making the claim true cost +92.5% instructions on the
+// filter-stream benchmark: +10% for the value-model checks and +75% more for
+// validating UTF-8 on strings it is skipping past. Skip exists to be the cheap
+// arm of a filter, and paying to reject content the caller is discarding is
+// backwards. Use SkipStrict where the identical boundary is what matters --
+// docs/wrong.md carries the numbers.
 func Skip(data []byte) (int, error) {
-	return skip(data, 0, 64)
+	return skip(data, 0, 64, false)
+}
+
+// SkipStrict is Skip with Unmarshal's boundary rather than framing's: a
+// SkipStrict that succeeds is an item Unmarshal would decode, with the same
+// span. It additionally rejects simple values outside the value model, map
+// keys that would not decode to a Go string, and text strings that are not
+// valid UTF-8.
+//
+// It is the arm to use when a skipped item still has to be known-decodable --
+// the adapter's case. It costs about 1.9x what Skip does on a filtering
+// workload, which is why the two are separate rather than one strict default.
+func SkipStrict(data []byte) (int, error) {
+	return skip(data, 0, 64, true)
 }
 
 // keyDecodesToString peeks at the item at b[j] and reports whether Unmarshal
@@ -50,7 +67,7 @@ func keyDecodesToString(b []byte, j int) bool {
 	return false
 }
 
-func skip(b []byte, i, depth int) (int, error) {
+func skip(b []byte, i, depth int, strict bool) (int, error) {
 	if depth < 0 {
 		return 0, ErrMalformed
 	}
@@ -67,14 +84,17 @@ func skip(b []byte, i, depth int) (int, error) {
 	case mtUint, mtNegInt:
 		return j, nil
 	case mtSimple:
-		// Only what decode accepts: false, true, null, undefined and the three
-		// float widths. Simple values 0-19 and the two-byte form (ai 24) are
-		// well-formed CBOR that this value model cannot represent.
-		switch ai {
-		case 20, 21, 22, 23, 25, 26, 27:
-			return j, nil
+		if strict {
+			// What decode accepts: false, true, null, undefined and the three
+			// float widths. Simple values 0-19 and the two-byte form are
+			// well-formed CBOR this value model cannot represent.
+			switch ai {
+			case 20, 21, 22, 23, 25, 26, 27:
+				return j, nil
+			}
+			return 0, ErrMalformed
 		}
-		return 0, ErrMalformed
+		return j, nil
 	case mtBytes, mtText:
 		if ai == 31 {
 			return 0, ErrMalformed
@@ -83,12 +103,11 @@ func skip(b []byte, i, depth int) (int, error) {
 		if end < j || end > len(b) {
 			return 0, ErrTruncated
 		}
-		if mt == mtText && !simd.ValidUTF8(b[j:end]) {
-			// Content, not framing -- and the only reason Skip looks at it is
-			// the contract that a Skip which succeeds is an item Unmarshal
-			// would decode (architecture.md). Unmarshal rejects a text string
-			// that is not valid UTF-8, so Skip has to as well or the boundary
-			// is not identical. Found by the fuzz on 61 cd.
+		if strict && mt == mtText && !simd.ValidUTF8(b[j:end]) {
+			// Content, not framing. Unmarshal rejects a text string that is
+			// not valid UTF-8 (found by the fuzz on 61 cd), so the strict arm
+			// has to as well -- and it is the reason the strict arm is
+			// separate: this scan is +75% instructions on the filter path.
 			return 0, ErrMalformed
 		}
 		return end, nil
@@ -97,7 +116,7 @@ func skip(b []byte, i, depth int) (int, error) {
 			return 0, ErrTruncated
 		}
 		for k := 0; k < int(arg); k++ {
-			n, err := skip(b[j:], 0, depth-1)
+			n, err := skip(b[j:], 0, depth-1, strict)
 			if err != nil {
 				return 0, err
 			}
@@ -113,18 +132,18 @@ func skip(b []byte, i, depth int) (int, error) {
 			// map[string]any. decode returns a Go string for a text string and
 			// for a byte string, and it sees through tags, so a tagged string
 			// is a key too. Each of those three facts cost a fuzz finding.
-			if !keyDecodesToString(b, j) {
+			if strict && !keyDecodesToString(b, j) {
 				if j >= len(b) {
 					return 0, ErrTruncated
 				}
 				return 0, ErrMalformed
 			}
-			n, err := skip(b[j:], 0, depth-1)
+			n, err := skip(b[j:], 0, depth-1, strict)
 			if err != nil {
 				return 0, err
 			}
 			j += n
-			n, err = skip(b[j:], 0, depth-1)
+			n, err = skip(b[j:], 0, depth-1, strict)
 			if err != nil {
 				return 0, err
 			}
@@ -132,7 +151,7 @@ func skip(b []byte, i, depth int) (int, error) {
 		}
 		return j, nil
 	case mtTag:
-		n, err := skip(b[j:], 0, depth-1)
+		n, err := skip(b[j:], 0, depth-1, strict)
 		if err != nil {
 			return 0, err
 		}

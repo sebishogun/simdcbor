@@ -72,14 +72,30 @@ func FuzzUnmarshalNeverPanics(f *testing.F) {
 			for i := 0; i <= len(data) && i <= 512; i++ {
 				p := data[:i]
 				_, un, uerr := Unmarshal(p)
-				sn, serr := Skip(p)
+
+				// SkipStrict carries the identical boundary, both directions.
+				sn, serr := SkipStrict(p)
 				if (uerr == nil) != (serr == nil) {
-					t.Errorf("prefix %d of %x: unmarshal err=%v, skip err=%v", i, data, uerr, serr)
+					t.Errorf("prefix %d of %x: unmarshal err=%v, skipstrict err=%v", i, data, uerr, serr)
 					return
 				}
 				if uerr == nil && un != sn {
-					t.Errorf("prefix %d of %x: consumed %d, span %d", i, data, un, sn)
+					t.Errorf("prefix %d of %x: consumed %d, strict span %d", i, data, un, sn)
 					return
+				}
+
+				// Skip judges framing, so only one direction holds: whatever
+				// Unmarshal decodes, Skip spans identically.
+				fn, ferr := Skip(p)
+				if uerr == nil {
+					if ferr != nil {
+						t.Errorf("prefix %d of %x: unmarshal decoded it, skip refused: %v", i, data, ferr)
+						return
+					}
+					if fn != un {
+						t.Errorf("prefix %d of %x: consumed %d, skip span %d", i, data, un, fn)
+						return
+					}
 				}
 			}
 		}()
