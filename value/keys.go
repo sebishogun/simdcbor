@@ -162,6 +162,34 @@ func appendCanonicalFloat(dst []byte, v Value) []byte {
 	return binary.BigEndian.AppendUint64(dst, bits64)
 }
 
+// ShortestFloat returns v in the narrowest float width that reads back
+// bit-identical, or v unchanged when it cannot narrow.
+//
+// Exported because the encoder's preferred-serialization rule and the map-key
+// identity rule are the same rule: two floats are the same value exactly when
+// they have the same shortest exact form. Two implementations of that would be
+// two answers to "is this the same key".
+func ShortestFloat(v Value) Value {
+	switch v.kind {
+	case Float16:
+		return v
+	case Float32:
+		if h, ok := float32ToHalfExact(uint32(v.num)); ok {
+			return FromFloat16Bits(h)
+		}
+		return v
+	case Float64:
+		if b32, ok := float64ToFloat32Exact(v.num); ok {
+			if h, ok := float32ToHalfExact(b32); ok {
+				return FromFloat16Bits(h)
+			}
+			return FromFloat32Bits(b32)
+		}
+		return v
+	}
+	return v
+}
+
 // float64ToFloat32Exact narrows only when widening the result restores the
 // original bits, which is what keeps a NaN payload from being invented or lost.
 func float64ToFloat32Exact(bits uint64) (uint32, bool) {

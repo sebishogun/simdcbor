@@ -42,6 +42,7 @@ type Decoder struct {
 	// keys selects which values may be map keys; the decoder does not enforce
 	// it, but it carries it for the value layer that does.
 	keys value.KeyMode
+	dup  DuplicatePolicy
 }
 
 // New returns a Decoder over b.
@@ -339,7 +340,7 @@ func (d *Decoder) mapValue(arg uint64, indef bool, depth int) (value.Value, erro
 				return value.Value{}, err
 			}
 			if done {
-				return value.FromMap(out...), nil
+				return d.applyDuplicatePolicy(out)
 			}
 			kv, err := d.pair(depth)
 			if err != nil {
@@ -363,6 +364,44 @@ func (d *Decoder) mapValue(arg uint64, indef bool, depth int) (value.Value, erro
 		if err != nil {
 			return value.Value{}, err
 		}
+		out = append(out, kv)
+	}
+	return d.applyDuplicatePolicy(out)
+}
+
+// applyDuplicatePolicy resolves keys that are the same key.
+//
+// CBOR permits duplicates on the wire, so a decoder has to choose. Leaving the
+// choice implicit is the one option that is not available: a Go map silently
+// keeps whichever entry was written last, and a caller has no way to learn
+// that a key was ever repeated.
+//
+// Sameness is canonical-encoding equality, so the two spellings of 1.0 are one
+// key even though the bytes differ.
+func (d *Decoder) applyDuplicatePolicy(kvs []value.KeyValue) (value.Value, error) {
+	if d.dup == DuplicateKeep || len(kvs) < 2 {
+		return value.FromMap(kvs...), nil
+	}
+	seen := make(map[string]int, len(kvs))
+	out := make([]value.KeyValue, 0, len(kvs))
+	for _, kv := range kvs {
+		k, err := value.KeyString(kv.Key, d.keys)
+		if err != nil {
+			// A key the mode does not allow; the value layer reports it.
+			return value.Value{}, ErrMalformed
+		}
+		if at, dup := seen[k]; dup {
+			switch d.dup {
+			case DuplicateError:
+				return value.Value{}, ErrDuplicateKey
+			case DuplicateFirstWins:
+				continue
+			case DuplicateLastWins:
+				out[at] = kv
+				continue
+			}
+		}
+		seen[k] = len(out)
 		out = append(out, kv)
 	}
 	return value.FromMap(out...), nil

@@ -34,6 +34,11 @@ type frame struct {
 	indefinit bool
 	want      uint64 // declared item count for a definite container
 	got       uint64 // items written so far (map pairs count as two)
+	// marks holds the buffer offset where each item of this container starts,
+	// recorded only for a map in a deterministic mode. Sorting keys means
+	// moving the encoded pairs, and the offsets are what makes that possible
+	// without re-encoding them.
+	marks []int
 }
 
 // Encoder appends CBOR to a buffer.
@@ -41,6 +46,7 @@ type Encoder struct {
 	buf   []byte
 	stack []frame
 	err   error
+	mode  Mode
 }
 
 // NewEncoder returns an Encoder appending to buf, which may be nil.
@@ -81,6 +87,9 @@ func (e *Encoder) item() error {
 				e.err = ErrCountOverrun
 				return e.err
 			}
+		}
+		if f.major == mtMap && e.mode.deterministic() {
+			f.marks = append(f.marks, len(e.buf))
 		}
 		f.got++
 	}
@@ -209,6 +218,11 @@ func (e *Encoder) WriteFloat64(f float64) error {
 		return err
 	}
 	bits := math.Float64bits(f)
+	if e.mode.deterministic() {
+		// Preferred serialization: the narrowest width that reads back
+		// bit-identical, which is the same rule map-key identity uses.
+		return e.writeShortestFloat(value.FromFloat64Bits(bits))
+	}
 	if b32 := math.Float32bits(float32(f)); math.Float64bits(float64(math.Float32frombits(b32))) == bits {
 		e.buf = append(e.buf, 0xfa)
 		e.buf = binary.BigEndian.AppendUint32(e.buf, b32)
@@ -220,11 +234,33 @@ func (e *Encoder) WriteFloat64(f float64) error {
 	return nil
 }
 
+// writeShortestFloat emits v at the narrowest width that reproduces its bits.
+// The item has already been counted by the caller.
+func (e *Encoder) writeShortestFloat(v value.Value) error {
+	s := value.ShortestFloat(v)
+	b, _ := s.FloatBits()
+	switch s.Kind() {
+	case value.Float16:
+		e.buf = append(e.buf, 0xf9, byte(b>>8), byte(b))
+	case value.Float32:
+		e.buf = append(e.buf, 0xfa)
+		e.buf = binary.BigEndian.AppendUint32(e.buf, uint32(b))
+	default:
+		e.buf = append(e.buf, 0xfb)
+		e.buf = binary.BigEndian.AppendUint64(e.buf, b)
+	}
+	e.popTag()
+	return nil
+}
+
 // WriteFloat16Bits, WriteFloat32Bits and WriteFloat64Bits write exact bits at
 // a chosen width, for a re-encode that must reproduce what it read.
 func (e *Encoder) WriteFloat16Bits(b uint16) error {
 	if err := e.item(); err != nil {
 		return err
+	}
+	if e.mode.deterministic() {
+		return e.writeShortestFloat(value.FromFloat16Bits(b))
 	}
 	e.buf = append(e.buf, 0xf9, byte(b>>8), byte(b))
 	e.popTag()
@@ -235,6 +271,9 @@ func (e *Encoder) WriteFloat32Bits(b uint32) error {
 	if err := e.item(); err != nil {
 		return err
 	}
+	if e.mode.deterministic() {
+		return e.writeShortestFloat(value.FromFloat32Bits(b))
+	}
 	e.buf = append(e.buf, 0xfa)
 	e.buf = binary.BigEndian.AppendUint32(e.buf, b)
 	e.popTag()
@@ -244,6 +283,9 @@ func (e *Encoder) WriteFloat32Bits(b uint32) error {
 func (e *Encoder) WriteFloat64Bits(b uint64) error {
 	if err := e.item(); err != nil {
 		return err
+	}
+	if e.mode.deterministic() {
+		return e.writeShortestFloat(value.FromFloat64Bits(b))
 	}
 	e.buf = append(e.buf, 0xfb)
 	e.buf = binary.BigEndian.AppendUint64(e.buf, b)
@@ -335,6 +377,12 @@ func (e *Encoder) end(major byte) error {
 		return e.err
 	}
 	e.stack = e.stack[:n-1]
+	if f.major == mtMap && e.mode.deterministic() {
+		if err := e.sortPairs(f); err != nil {
+			e.err = err
+			return err
+		}
+	}
 	if f.indefinit {
 		e.buf = append(e.buf, 0xff)
 	}
@@ -348,6 +396,52 @@ func (e *Encoder) end(major byte) error {
 		}
 	}
 	e.popTag()
+	return nil
+}
+
+// sortPairs reorders an encoded map's pairs into the mode's key order.
+//
+// It sorts the bytes already written rather than buffering values and encoding
+// at the end, which keeps the streaming shape: a caller writes pairs as it has
+// them, and only a map in a deterministic mode pays for the reordering.
+func (e *Encoder) sortPairs(f frame) error {
+	if len(f.marks) < 4 { // fewer than two pairs: nothing to order
+		return nil
+	}
+	if len(f.marks)%2 != 0 {
+		return ErrCountOverrun
+	}
+	type pair struct {
+		key   []byte
+		whole []byte
+	}
+	n := len(f.marks) / 2
+	pairs := make([]pair, n)
+	for i := 0; i < n; i++ {
+		ks := f.marks[2*i]
+		vs := f.marks[2*i+1]
+		ve := len(e.buf)
+		if i+1 < n {
+			ve = f.marks[2*(i+1)]
+		}
+		pairs[i] = pair{
+			key:   append([]byte(nil), e.buf[ks:vs]...),
+			whole: append([]byte(nil), e.buf[ks:ve]...),
+		}
+	}
+	// Insertion sort, stable: two entries with the same key keep their order,
+	// so a duplicate-key check downstream still sees which came first.
+	order := e.mode.order()
+	for i := 1; i < n; i++ {
+		for j := i; j > 0 && value.CompareKeys(pairs[j].key, pairs[j-1].key, order) < 0; j-- {
+			pairs[j], pairs[j-1] = pairs[j-1], pairs[j]
+		}
+	}
+	out := e.buf[:f.marks[0]]
+	for _, p := range pairs {
+		out = append(out, p.whole...)
+	}
+	e.buf = out
 	return nil
 }
 
