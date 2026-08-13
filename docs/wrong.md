@@ -203,3 +203,32 @@ against `h'ff'` (`41 ff`, two) does it: bytewise takes the uint on
 `0x19 < 0x41`, length-first takes the byte string on length. The plan's
 pair is kept in the test as well, pinned to what the rules actually do, so
 the claim cannot come back.
+
+## The indefinite-length sentinel was a legal argument value
+
+**Believed.** A head reader can return "indefinite length" by handing back
+a sentinel argument. `^uint64(0)` is the obvious choice: no real length is
+that large.
+
+**Actually.** It is not a length, it is an argument, and `1b
+ffffffffffffffff` carries exactly `^uint64(0)` as the value of the largest
+unsigned integer CBOR can express. With the sentinel in place that integer
+decoded as malformed, and so did its negative counterpart `3b
+ffffffffffffffff`, the `-2^64` endpoint the value model exists to
+represent.
+
+**How it surfaced.** The RFC 8949 appendix A vectors, on their first run
+against the new decoder. Two of them, immediately.
+
+**Source.** `internal/codec/decoder.go` `head`.
+
+**Consequence.** Whether a head declares its length is a separate fact
+from what the argument says, so it is a separate return value. The lesson
+generalizes past CBOR: a sentinel drawn from the same domain as the data
+is only safe while the data does not reach it, and "no real length is that
+large" was true of lengths and false of arguments — which is the same
+mistake in one word.
+
+The vectors found a second defect in the same run: a definite-length text
+string was not being validated as UTF-8, only a chunked one was. Both are
+pinned by the vector table now.
