@@ -211,7 +211,7 @@ Expected: PASS.
 
 **Step 4: Write the failing key/order tests**
 
-`keys_test.go`: bytes key `h'00'` equals bytes key `h'00'` and differs from `h'0000'`; float key `0xf9 3c00` equals `0xfa 3f800000` (both `1.0`) under canonical-encoding equality, and `NaN` keys are stable (each NaN key equals itself under canonical encoding); structural keys rejected by default, enabled by a mode flag, and then `[]Value{1,2}` ≠ `[]Value{1,2,0}`.
+`keys_test.go`: bytes key `h'00'` equals bytes key `h'00'` and differs from `h'0000'`; float key `0xf9 3c00` equals `0xfa 3f800000` (both `1.0`) under canonical-encoding equality, and `NaN` keys are stable (each NaN key equals itself under canonical encoding); `Undefined` is a direct comparable key like the other named constants; tag keys classify by their tagged value: `Tag{1, "a"}` equals `Tag{1, "a"}` and differs from `Tag{2, "a"}` and `Tag{1, "b"}`, a tag of bytes is a valid key, and a tag of an array is rejected by default and accepted under `StructuralKeys` (canonical-encoding equality, consistent with duplicate detection); structural keys rejected by default, enabled by a mode flag, and then `[]Value{1,2}` ≠ `[]Value{1,2,0}`.
 
 `order_test.go`: the `CoreDeterministic` comparator is bytewise lexicographic over the **full encoded keys — head and body** (RFC 8949 §4.2.1); the `LengthFirst` comparator is length-first then bytewise (RFC 8949 §4.2.3 legacy, the RFC 7049 §3.9 "Canonical CBOR" rule). Text keys of differing encoded lengths prove the head participates: `"z"` (`61 7a`) vs `"aa"` (`62 61 61`) — both RFC modes put `"z"` first (head 0x61 < 0x62 / shorter), while `sort.Strings` puts `"aa"` first; that contrast is the adapter-mode boundary, pinned again in Task 10. A pair that separates the two modes: `h'ff'` vs `h'0000'` — bytewise sorts `h'0000'` first (0x00 < 0xff); length-first sorts `h'ff'` first (shorter). Same-length `h'ff'` vs `h'00'` is bytewise in both.
 
@@ -271,7 +271,7 @@ Expected: PASS.
 This task lands the corpus and assertion work that Stage 0 (Task 1) deliberately deferred:
 
 - carry the head-byte enumeration test (from Task 1's `skip_test.go`, extended): for every head byte and the `0xf8`+byte form, decoder and `Skip` agree on accept/reject and span;
-- extend the generative corpus (the pattern from the shipped `skip_test.go`) so the generator emits the full simple-value space — values 0–19, `0xf8` forms 32–255, named 20–23 — plus indefinite containers and indefinite byte/text strings;
+- extend the generative corpus (the pattern from the shipped `skip_test.go`) so the generator emits the full simple-value space — values 0–19, `0xf8` forms 32–255, named 20–23 — plus indefinite containers, indefinite byte/text strings, and tag keys (tag of a scalar, tag of bytes, tag of a structural value under `StructuralKeys`);
 - repair the random-bytes loop: **assert** both errors agree (`if (uerr == nil) != (serr == nil) { fail }`) instead of discarding them to `_`.
 
 Run: `go test ./internal/codec/ -run 'TestSkipParity|TestSkipAgreesWithUnmarshalOnEveryHead'`
@@ -380,7 +380,7 @@ git commit -m "feat(codec): streaming encoder, container stack, fxamacker intero
 - mode names are the data-model LLD's, unambiguous: `CoreDeterministic` (RFC 8949 §4.2.1, bytewise over the full encoded keys — head and body) and `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then bytewise);
 - `CoreDeterministic` sorts encoded-bytewise (`h'0000'` before `h'ff'`; text `"z"` → `61 7a` before `"aa"` → `62 61 61`); `LengthFirst` sorts `h'ff'` before `h'0000'` (shorter first);
 - both modes' float rule: `1.0` encodes `f9 3c00`, `1.5` encodes `f9 3e00`, a value that does not round-trip through `float16` encodes `fa`/`fb`; the adapter mode (Task 10) never emits `f9`;
-- duplicate policies: `Error` → `ErrDuplicateKey` on the second canonical-equal key; `FirstWins`/`LastWins` pin their map results; `0xf9 3c00` and `0xfa 3f800000` are the same key under every policy.
+- duplicate policies: `Error` → `ErrDuplicateKey` on the second canonical-equal key; `FirstWins`/`LastWins` pin their map results; `0xf9 3c00` and `0xfa 3f800000` are the same key under every policy; tag keys are canonical-equal iff number and tagged value are (a duplicate `Tag{1, "a"}` key is caught under `Error`);
 
 Run: `go test ./internal/codec/ -run 'TestModes|TestDuplicates'`
 Expected: FAIL.
@@ -506,7 +506,7 @@ git commit -m "feat(codec): lazy values as framed byte ranges"
 
 **Step 1: Write the failing notation tests**
 
-`diag_test.go`, per the LLD table (exact wire examples): `00`→`0`, `20`→`-1`, `3b ffffffffffffffff`→`-18446744073709551616`, `42 01 02`→`h'0102'` (the head is `0x42`, length 2 — not `0x40`), `61 61`→`"a"`, `f4`/`f5`/`f6`/`f7`, `f9 3c00`→`1.0`, `e0`→`simple(0)`, `f8 20`→`simple(32)`, `80`, `9f 00 ff`→`[_ 0]`, `5f 42 01 02 ff`→`(_ h'0102')`, `7f 61 61 61 62 ff`→`(_ "ab")`, `bf ... ff`→`{_ ...}`, and `c0 74 32 30 31 33 2d 30 33 2d 32 31 54 32 30 3a 30 34 3a 30 30 5a`→`0("2013-03-21T20:04:00Z")` (tag 0 of the 20-byte date-time string — `0x74`, not `0x78 0x18`). Floats render as shortest round-tripping decimal, `nan`/`infinity`/`-infinity` by name. Parse side round-trips through the value model. Error-prefix rendering: a truncated item renders the well-formed prefix in notation.
+`diag_test.go`, per the LLD table (exact wire examples): `00`→`0`, `20`→`-1`, `3b ffffffffffffffff`→`-18446744073709551616`, `42 01 02`→`h'0102'` (the head is `0x42`, length 2 — not `0x40`), `61 61`→`"a"`, `f4`/`f5`/`f6`/`f7`, `f9 3c00`→`1.0`, `e0`→`simple(0)`, `f8 20`→`simple(32)`, `80`, `9f 00 ff`→`[_ 0]`, `5f 42 01 02 ff`→`(_ h'0102')`, `7f 61 61 61 62 ff`→`(_ "ab")`, `bf ... ff`→`{_ ...}`, and `c0 74 32 30 31 33 2d 30 33 2d 32 31 54 32 30 3a 30 34 3a 30 30 5a`→`0("2013-03-21T20:04:00Z")` (tag 0 of the 20-byte date-time string — `0x74`, not `0x78 0x18`). Floats render as the shortest round-tripping decimal, with integral float values keeping a trailing `.0` (`1.0`, not `1`) to preserve the float/int distinction; nonfinite values spell exactly `NaN`, `Infinity`, `-Infinity` — capitals per RFC 8949 §8, and the tests pin the exact spelling. Parse side round-trips through the value model. Error-prefix rendering: a truncated item renders the well-formed prefix in notation.
 
 Run: `go test ./diag/`
 Expected: FAIL.

@@ -53,7 +53,8 @@ This is the **JSON-shaped subset**, not the full RFC 8949 codec:
   encoded bytes, head included, so text keys of differing encoded
   lengths order by length through the head: `"z"` → `61 7a` before
   `"aa"` → `62 61 61`, while `sort.Strings` puts `"aa"` first; the two
-  coincide only for equal-length text keys), shortest head forms,
+  coincide where the encoded head cannot reverse the content comparison
+  — e.g. equal-length text keys), shortest head forms,
   `float32` when it round-trips — **no** `float16` emission, **no** RFC
   8949 §4.2.3 length-first legacy key order. There is no full-RFC claim
   anywhere.

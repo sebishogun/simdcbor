@@ -64,8 +64,9 @@ number:
 Tags are first-class: `Tag{Number, Value}` wraps the tagged item, nested
 tags nest. The value layer stores what the wire said; it does not
 interpret. A small set of well-known tags (`0` date-time text, `1` epoch
-float, `2`/`3` bignum, `4`/`5` decimal fraction, `32`/`33`/`34` URI,
-`36` MIME, `55799` self-describe) may gain native conversions in a later
+float, `2`/`3` bignum, `4`/`5` decimal fraction, `32` URI, `33`
+base64url, `34` base64, `36` MIME, `55799` self-describe) may gain native
+conversions in a later
 phase, behind explicit opt-in; the generic `Tag` form is the default for
 every tag number. Tag validation is a **mode**: `Discard` (adapter
 behavior — current `Unmarshal` drops tag numbers entirely), `Keep`
@@ -76,8 +77,9 @@ behavior — current `Unmarshal` drops tag numbers entirely), `Keep`
 CBOR allows any item as a map key. The value model must therefore hold
 keys that Go cannot put in a `map`:
 
-- **comparable in Go, direct:** `Uint`, `NegInt`, `Bool`, `Null`, `Text`,
-  `Simple` — usable as Go map keys as-is. (Floats are comparable in Go
+- **comparable in Go, direct:** `Uint`, `NegInt`, `Bool`, `Null`,
+  `Undefined`, `Text`, `Simple` — usable as Go map keys as-is. (Floats
+  are comparable in Go
   but are excluded from the direct path: `NaN` is not equal to itself, so
   a `NaN` key could never be looked up; `Float16`/`Float32`/`Float64` map
   to a canonical key form, see below.)
@@ -86,6 +88,16 @@ keys that Go cannot put in a `map`:
   hash — byte-exact, unambiguous, and stable regardless of which float
   width the wire used. Two keys are equal iff their canonical encodings
   are equal.
+- **tags as keys:** a `Tag{Number, Value}` is a key exactly when its
+  `Value` is a key under the same rules, and two tag keys are equal iff
+  their numbers are equal and their tagged values are equal by that same
+  key equality — structural recursion for arrays/maps under
+  `StructuralKeys`, direct/canonical for scalars. This is one recursive
+  policy, coherent with canonical-encoding equality: the tag's canonical
+  wire encoding (tag head plus encoded value) is equal exactly when
+  number and value are, so duplicate detection and ordering agree with
+  it. A tag whose value is not a valid key is rejected exactly as that
+  value would be as a key.
 - **non-comparable in Go:** `Array` and `Map` keys (CBOR permits them).
   Policy: **reject by default** with `ErrUnsupportedKey` — matching the
   shipped subset's string-keys-only boundary in spirit — with an opt-in
@@ -112,7 +124,8 @@ A `DuplicatePolicy` applies at map build:
 Policy is a decode-time decision, per `Decoder` configuration, not a value
 property. Canonical-equal means canonical-encoding-equal (see keys above):
 `0xf9 3c00` and `0xfa 3f800000` are the same key `1.0` under every
-policy.
+policy, and tag keys are canonical-equal iff their numbers are equal and
+their tagged values are canonical-equal.
 
 ## Deterministic ordering (CoreDeterministic and LengthFirst)
 
@@ -135,8 +148,9 @@ content-bytewise order over the key **contents**. That is **not**
 head byte included, so text keys of differing encoded lengths order by
 length through the head (`"z"` → `61 7a` sorts before `"aa"` →
 `62 61 61` under `CoreDeterministic`; `sort.Strings` puts `"aa"` first).
-The two coincide only where the head cannot alter the comparison —
-equal-length text keys, whose head bytes are identical. The shipped
+The two coincide where the encoded head cannot reverse the content
+comparison — e.g. equal-length text keys, whose head bytes are
+identical. The shipped
 claim ("same map, same bytes") survives either; `CoreDeterministic` and
 `LengthFirst` arrive with the modes as true encoded-byte comparators.
 No ordering applies inside `Array` (order is data).
@@ -144,8 +158,11 @@ No ordering applies inside `Array` (order is data).
 ## Shortest forms
 
 `appendHead` already writes the shortest head for an argument (`ai < 24`
-inline, then `24`/`25`/`26`/`27`). The value layer's encoder extends
-shortest-form to numbers under the deterministic/canonical modes:
+inline, then `24`/`25`/`26`/`27`). The value layer does **no stream or
+wire I/O** — nothing is encoded here; its only wire-adjacent outputs are
+the canonical key encodings and comparators the codec's shortest-form
+emission depends on. Under the `CoreDeterministic`/`LengthFirst` modes
+the float rule extends:
 
 - integers: shortest head for the magnitude (`0`–`23` inline, `uint8`,
   `uint16`, `uint32`, `uint64` / the negint magnitude mirror);

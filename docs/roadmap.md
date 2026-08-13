@@ -51,14 +51,17 @@ every major/simple/float type with bit fidelity (`NegInt` over the full
 CBOR range `-1`..`-2^64` via its `uint64` magnitude, including the
 `-2^64` endpoint that `int64` cannot hold; `Float16`/`Float32`/`Float64`
 as distinct kinds), tags as `Tag{Number, Value}`, arbitrary keys with
-canonical-encoding equality, the full simple-value space (values 0–19
+canonical-encoding equality (tag keys classify by their tagged value),
+the full simple-value space (values 0–19
 short form, `0xf8` forms 32–255, named `false`/`true`/`null`/`undefined`,
 `break` reserved), `[]KeyValue` ordered maps, duplicate policies, and the
 two ordering comparators — `CoreDeterministic` (RFC 8949 §4.2.1,
 bytewise) and `LengthFirst` (RFC 8949 §4.2.3 legacy, length-first then
-bytewise) — plus shortest-form rules. Nothing here touches the wire: it
-is pure data structures plus ordering/hashing logic, so it is the
-cheapest phase to get exactly right.
+bytewise) — plus canonical key encodings, the basis of ordering and
+equality. The value layer does no stream or wire I/O: it is pure data
+structures plus ordering/hashing logic (its only wire-adjacent output is
+canonical key encodings and comparators), so it is the cheapest phase to
+get exactly right.
 
 Exit: value-model property tests (fidelity round-trips, key equality,
 order comparators) against fxamacker as oracle where the model overlaps.
@@ -78,8 +81,11 @@ from the streaming LLD.
 
 Exit: full decode coverage over the RFC 8949 appendix A vectors —
 including `3b ffffffffffffffff` → `-18446744073709551616` (`-2^64`) and
-the `5f`/`7f` indefinite string examples; decoder and fxamacker agree on
-every accepted input; the shipped subset decodes identically through the
+the `5f`/`7f` indefinite string examples — plus the extended corpus;
+fxamacker interop **overlaps and differences explicitly documented**:
+pinned by test where the two agree, documented with the reason where
+policy legitimately differs (the oracle is the RFC, not fxamacker);
+the shipped subset decodes identically through the
 adapter.
 
 ## Phase 4 — Streaming encoder (`internal/codec`)

@@ -99,7 +99,7 @@ human-readable CBOR:
 | `20` | `-1` |
 | `3b ffffffffffffffff` | `-18446744073709551616` (that is `-2^64`, `n = 2^64-1`; the renderer prints the mathematical value, not an int64) |
 | `42 01 02` | `h'0102'` (major 2, length 2 — the head is `0x42`, not `0x40`) |
-| `61 61` | `"a"` (escaped per §8.2.1) |
+| `61 61` | `"a"` (JSON-style string syntax, per RFC 8949 §8, which references the Extended Diagnostic Notation (EDN) form as exact) |
 | `f4` `f5` `f6` `f7` | `false` `true` `null` `undefined` |
 | `f9 3c00` | `1.0` (shortest decimal that round-trips) |
 | `e0` | `simple(0)` |
@@ -117,8 +117,10 @@ Rules pinned in the LLD sense:
 
 - floats render as the shortest decimal that round-trips to the same
   bits (the dtoa machinery simd already ships for the JSON side);
-- `NaN`, `Infinity`, `-Infinity` render as `nan`, `infinity`,
-  `-infinity`;
+- integral float values keep a **trailing `.0`** (`1.0`, never `1`), so
+  a float is never mistaken for an integer;
+- nonfinite values spell exactly `NaN`, `Infinity`, `-Infinity` —
+  capitals, per RFC 8949 §8; tests pin the exact spelling;
 - indefinite containers render with `[_` / `{_`, and indefinite byte/text
   strings with `(_ h'...')` / `(_ "…")`; the parser accepts both definite
   and indefinite and distinguishes them in the value model via the

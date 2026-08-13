@@ -8,9 +8,10 @@ outgrows them, they are superseded by a new entry.
 
 ## Lazy values: deferred on measurement, not on hope
 
-**Status:** deferred (documented in `decode.go` and committed with
-`d8a9077`; the reasoning predates it in the original decode commit
-`fb05cdd`).
+**Status:** deferred, documented in the `decode.go` comment added with
+`d8a9077` (the review round that also added Skip, Marshal, and the shape
+sweep); the original decode commit `fb05cdd` did not discuss lazy
+values.
 
 The decode sweep against fxamacker narrows exactly where allocation
 dominates:
@@ -38,8 +39,9 @@ deliver the predicted allocation drop, that finding belongs here.
 
 ## Presize overflow on malformed length headers
 
-**Status:** fixed in `fb05cdd`; regression-covered by the pre-flight
-bound.
+**Status:** fixed in `fb05cdd`; bounded in code by the pre-flight check
+and presize cap, but **not yet pinned by a test** — the pin
+(`TestPresizeBounded`) is scheduled in the plan's Task 2.
 
 The original decoder presized container allocations from the header's
 declared length before bounding it by the remaining input. Fuzzing with
@@ -60,8 +62,9 @@ pins it proves only same-map-same-bytes. The sort is **not** RFC 8949
 §4.2.1 core deterministic: that order compares the full encoded keys,
 head included, so text keys of differing encoded lengths order by length
 through the head (`"z"` → `61 7a` before `"aa"` → `62 61 61`), while
-`sort.Strings` orders by content (`"aa"` first); the two coincide only
-for equal-length text keys. The §4.2.3 length-first legacy ordering and
+`sort.Strings` orders by content (`"aa"` first); the two coincide where
+the encoded head cannot reverse the content comparison — e.g.
+equal-length text keys, whose head bytes are identical. The §4.2.3 length-first legacy ordering and
 `float16` emission are not implemented either. The README now scopes the
 claim to what the code and tests prove; anyone reading "canonical" in
 this codebase should read "canonical within the subset: sorted Go string

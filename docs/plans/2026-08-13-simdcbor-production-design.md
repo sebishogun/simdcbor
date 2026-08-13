@@ -49,7 +49,9 @@ internal/codec      streaming Encoder/Decoder core; the only wire code
 ```
 
 Dependency rule: `diag` → `internal/codec` → `value`; the root adapter
-uses all three. `value` is pure data structures (no wire), so it is the
+uses all three. `value` is pure data structures with **no stream or wire
+I/O** — its only wire-adjacent output is canonical key encodings and
+comparators, which the codec consumes — so it is the
 first and cheapest phase to get exactly right, and `diag` never imports
 the root, so notation cannot entangle with the adapter.
 
@@ -65,8 +67,11 @@ See `docs/lld/data-model.md`. The load-bearing decisions:
   `encoding/json`);
 - tags as `Tag{Number, Value}`, generic by default, interpret mode for
   the well-known set behind opt-in;
-- maps as ordered `[]KeyValue`; keys comparable in Go directly,
-  comparable-by-canonical-encoding for bytes/floats (NaN-safe), and
+- maps as ordered `[]KeyValue`; keys comparable in Go directly
+  (including the `Undefined` named constant), comparable-by-canonical-
+  encoding for bytes/floats (NaN-safe), tag keys classifying by their
+  tagged value (key-valid iff the value is, equal iff number and value
+  are), and
   structural keys (arrays/maps as keys) rejected by default with an
   opt-in canonical-encoding hash; the full simple-value space — numeric
   values 0–19 (short form) and 32–255 (`0xf8` form), the named

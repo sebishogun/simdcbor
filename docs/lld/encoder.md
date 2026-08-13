@@ -72,7 +72,8 @@ Mode names are the data-model LLD's, unambiguous:
   encoded key, head included, so text keys of differing encoded lengths
   order by length through the head: `"z"` → `61 7a` before `"aa"` →
   `62 61 61`, where `sort.Strings` puts `"aa"` first). The two coincide
-  only for equal-length text keys. The adapter sorts before encoding, as
+  where the encoded head cannot reverse the content comparison — e.g.
+  equal-length text keys. The adapter sorts before encoding, as
   today — its fixed mode is a scoped Go-string-key claim, not RFC core
   canonical.
 

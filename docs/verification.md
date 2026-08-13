@@ -45,8 +45,10 @@ pipes `go test` through `tee` without `pipefail`, so the pipe reports
   by the plan's Stage 0, with corpus and assertion work in the decoder
   task.
 - **Truncation**: every prefix of a real item errors; **random bytes**
-  never panic (5000 inputs); the fuzzer-caught presize overflow is
-  regression-covered by the pre-flight bound.
+  never panic (5000 inputs). The fuzzer-caught presize overflow is
+  bounded in the code (pre-flight check plus presize cap) but is **not
+  yet pinned by a test** — the pin (`TestPresizeBounded`) is scheduled in
+  the plan's Task 2.
 - **Floats**: half/single/double decode to the same `float64`.
 
 These tests bound every claim the README makes about the **subset**.
