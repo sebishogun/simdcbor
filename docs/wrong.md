@@ -159,3 +159,29 @@ proves expensive, the alternative is a different contract rather than a
 different implementation: `Skip` guarantees framing, `Unmarshal`
 guarantees representability, and the fuzz asserts one direction instead of
 two. That choice is open; this entry is where it starts.
+
+## The plan's example for the two deterministic orders was the mistake it warns about
+
+**Believed.** Task 3 named a key pair that separates RFC 8949's two
+orderings: `h'ff'` against `h'0000'` — "bytewise sorts `h'0000'` first
+(0x00 < 0xff); length-first sorts `h'ff'` first (shorter)."
+
+**Actually.** Both orderings put `h'ff'` first. The same task says the
+comparator runs over "the full encoded keys — head and body", and with
+heads included those keys are `41 ff` and `42 00 00`: bytewise decides on
+`0x41 < 0x42` and never reaches the contents. The example compared the
+contents, which is precisely the error the comparator exists to prevent
+and which the neighbouring `"z"` vs `"aa"` example gets right.
+
+**How it surfaced.** Writing the test from the plan. It failed, and the
+implementation was correct.
+
+**Source.** RFC 8949 §4.2.1 and §4.2.3; `value/order.go`.
+
+**Consequence.** A pair that does separate them has to cross major types,
+because within one major type a shorter encoding almost always carries a
+smaller head and the two rules agree. `uint 500` (`19 01 f4`, three bytes)
+against `h'ff'` (`41 ff`, two) does it: bytewise takes the uint on
+`0x19 < 0x41`, length-first takes the byte string on length. The plan's
+pair is kept in the test as well, pinned to what the rules actually do, so
+the claim cannot come back.
