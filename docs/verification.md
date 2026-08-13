@@ -41,7 +41,10 @@ pipes `go test` through `tee` without `pipefail`, so the pipe reports
   generates simple values (`ai` 0–19, `0xf8` form) and the random-bytes
   loop discards both errors (`_ = ue; _ = se`), so it asserts nothing
   about agreement. `Skip` accepts those simple values; `Unmarshal`
-  rejects them with `ErrMalformed`. Recorded in `docs/wrong.md`; fixed
+  rejects them with `ErrMalformed` — and `skip.go`'s doc comment claims
+  the boundary is identical to `Unmarshal`'s, a known
+  implementation-doc defect corrected at the source in the Stage 0 task.
+  Recorded in `docs/wrong.md`; fixed
   by the plan's Stage 0, with corpus and assertion work in the decoder
   task.
 - **Truncation**: every prefix of a real item errors; **random bytes**

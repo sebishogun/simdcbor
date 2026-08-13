@@ -85,8 +85,14 @@ notation — is designed and planned: [design](docs/plans/2026-08-13-simdcbor-pr
 ![benchmarks](docs/bench.svg)
 
 
-Decode into `any`, minimum of three on amd64/avx512, against
-fxamacker/cbor (reproduce with `make bench`):
+Decode into `any`, against fxamacker/cbor. The table is a **historical
+record, not a fresh claim**: the min-of-three sweep from the 2026-08-09
+commit-era measurement (the commits that landed the sweep and chart), run
+on amd64/avx512 — the machine model beyond that was not retained.
+`make bench` (one process, shuffled, count=6, minimum) is the
+**reproduction command**, not the source of the quoted min-of-three
+numbers; re-running it yields fresh numbers under the rules in
+[docs/verification.md](docs/verification.md):
 
 | shape | simdcbor | fxamacker | |
 |---|---|---|---|
@@ -106,6 +112,7 @@ Pure Go, no cgo.
 
 ## Documentation
 
+- [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md) — working notes for agents
 - [docs/architecture.md](docs/architecture.md) — shipped pipeline and target layout
 - [docs/roadmap.md](docs/roadmap.md) — the approved path to the full codec
 - [docs/verification.md](docs/verification.md) — what the tests and benchmarks prove

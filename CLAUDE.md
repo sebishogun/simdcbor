@@ -20,6 +20,16 @@ those simple values; the random-bytes loop discards both errors). The
 divergence is recorded in `docs/wrong.md` and scheduled as Stage 0 of the
 production plan.
 
+## Required reading order
+
+Before any task: `README.md` → `docs/architecture.md` → the four LLDs
+(`docs/lld/data-model.md`, `docs/lld/decoder.md`, `docs/lld/encoder.md`,
+`docs/lld/streaming-lazy-and-diagnostic.md`) → `docs/roadmap.md` →
+`docs/verification.md` → `docs/wrong.md` → the design
+(`docs/plans/2026-08-13-simdcbor-production-design.md`) → the plan
+(`docs/plans/2026-08-13-simdcbor-production.md`). Each file assumes the
+ones before it.
+
 ## Disassemble first, always
 
 Before proposing a cause for anything slow, before writing a variant,
@@ -70,10 +80,31 @@ that is the exact shape of the one bug this code has already had (an
 unguarded presize on a malformed length header, caught by fuzzing).
 Fuzz before and after any decoder change.
 
-## Documentation-only branch
+## Task scope and releases
 
-`docs/v120-documentation` may change only `.md` files: no Go, no tests,
-no module files, no Makefile, no assets, no workflows, no releases, no
-push. Verify with `make test`, `make vet`, and `go test -race ./...`
-before committing, and check that every internal link in changed docs
-resolves.
+Scope is **per task**, not a standing branch rule. This branch
+(`docs/v120-documentation`) is documentation-only for the current task —
+only `.md` files change here. A code task runs on its own branch (per the
+plan) and changes exactly what that task lists; no task implies
+permission to push, tag, or release unless it says so.
+
+Current status, factual: **no tagged or published release** (no git
+tags, local or remote; pre-v1); the shipped API is the JSON-shaped
+subset. Release gates are the plan's Task 11 gate list and
+`docs/verification.md`'s rules — full suite, race, vet, fuzz, cross-arch,
+bench records — plus the owner's decision; docs never declare a release.
+The roadmap, design, and plan describe the approved target, **not
+shipped behavior**; only the README's shipped sections,
+`docs/architecture.md`'s shipped scope, `docs/verification.md`'s pinned
+list, and the code and tests state what ships.
+
+Before committing: `make test`, `make vet`, `go test -race ./...`, and
+check that every internal link in changed docs resolves.
+
+## Concurrency posture
+
+`Unmarshal`, `Marshal`, and `Skip` are stateless package functions: no
+package-level mutable state, no retained input — safe for concurrent
+calls from any number of goroutines. The caller owns the input slice
+(never retained, safe to reuse after the call) and the results (freshly
+allocated, safe to mutate).

@@ -89,7 +89,7 @@ Expected: FAIL — the heads `e0`–`f3` and every `f8 xx` disagree (Skip accept
 
 **Step 2: Implement the consistency fix**
 
-In `skip.go`, give the simple case the same accept set as `decode.go` for the shipped subset — `ai` 20–23 and 25–27 accept, `ai` 0–19 and 24 reject with `ErrMalformed` (readArg already rejects 28–30 and 31). Structure it as a policy check shared by both paths, so the decoder task (Task 4) only widens the policy to the full simple-value model — the two paths cannot drift again.
+In `skip.go`, give the simple case the same accept set as `decode.go` for the shipped subset — `ai` 20–23 and 25–27 accept, `ai` 0–19 and 24 reject with `ErrMalformed` (readArg already rejects 28–30 and 31). Structure it as a policy check shared by both paths, so the decoder task (Task 4) only widens the policy to the full simple-value model — the two paths cannot drift again. Correct the doc comment's identical-boundary claim (a known implementation-doc defect, `docs/wrong.md`) to state the policy-driven accept set, so comment and code agree.
 
 **Step 3: Run the tests**
 

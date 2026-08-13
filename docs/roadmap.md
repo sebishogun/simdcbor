@@ -16,7 +16,10 @@ plan in `docs/plans/2026-08-13-simdcbor-production.md`; the LLDs in
 
 Scope: close the shipped divergence where `Skip` accepts simple values
 (`ai` 0–19, `0xf8` form) that `Unmarshal` rejects with `ErrMalformed`
-(recorded in `docs/wrong.md`). Accept sets become **policy-driven** —
+(recorded in `docs/wrong.md`). The doc comment on `skip.go` claims the
+accept/reject boundary is identical to `Unmarshal`'s — a known
+implementation-doc defect, corrected at the source in this phase's task
+(not as a docs patch). Accept sets become **policy-driven** —
 the shipped subset rejects those values consistently (both paths), and
 the full simple-value model arrives with the value-model and decoder
 phases, where both paths accept consistently. The direction is the full

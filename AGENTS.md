@@ -33,6 +33,17 @@ planned in `docs/plans/2026-08-13-simdcbor-production.md`. `docs/roadmap.md`
 orders the work; the LLDs in `docs/lld/` pin the data model, decoder,
 encoder, and streaming/lazy/diagnostic designs.
 
+## Required reading order
+
+Before any task: `README.md` → `docs/architecture.md` → the four LLDs
+(`docs/lld/data-model.md`, `docs/lld/decoder.md`, `docs/lld/encoder.md`,
+`docs/lld/streaming-lazy-and-diagnostic.md`) → `docs/roadmap.md` →
+`docs/verification.md` → `docs/wrong.md` → the design
+(`docs/plans/2026-08-13-simdcbor-production-design.md`) → the plan
+(`docs/plans/2026-08-13-simdcbor-production.md`). Each file assumes the
+ones before it; skipping ahead is how edits drift from recorded
+decisions.
+
 ## Layout
 
 | path | what it is |
@@ -87,9 +98,35 @@ or the commit that produced it. Nothing inferred from implementation shape.
 input, fuzzed or not. Every allocation must be bounded by the remaining input
 before it happens. Fuzz before and after every decoder change.
 
-## Scope discipline
+## Task scope
 
-This branch is documentation-only (`docs/v120-documentation`). Only `.md`
-files may be modified here; no Go, no tests, no `go.mod`/`go.sum`, no
-`Makefile`, no assets, no workflows, no releases, no push. Code tasks live in
-`docs/plans/2026-08-13-simdcbor-production.md` and execute on a code branch.
+Scope is **per task**, not a standing branch rule. The current branch
+(`docs/v120-documentation`) is documentation-only for the current task —
+only `.md` files change here; Go, tests, module files, the Makefile, and
+assets are out of scope for *that* task. A code task executes on its own
+branch (per the plan) and changes exactly what that task lists. No task
+implies permission to push, tag, or release unless the task says so.
+
+## Release and version status
+
+Current status, factual: **no tagged or published release exists** (no
+git tags, local or remote; pre-v1), and the shipped API is the
+JSON-shaped subset described above. Release gates are the plan's Task 11
+gate list and `docs/verification.md`'s rules — full suite, race, vet,
+fuzz, cross-arch, benchmarks recorded — plus the owner's decision; docs
+never declare a release.
+
+**Roadmap-not-shipped:** `docs/roadmap.md`, the design, and the plan
+describe the approved target, not shipped behavior. Nothing in them is a
+claim about what the package does today; only the README's shipped
+sections, `docs/architecture.md`'s shipped scope, `docs/verification.md`'s
+pinned list, and the code and tests state what ships.
+
+## Concurrency posture
+
+The shipped API is three stateless package functions — `Unmarshal`,
+`Marshal`, `Skip` — plus the two error values. No package-level mutable
+state, no retained input: every function is safe for concurrent calls
+from any number of goroutines. The caller owns the input slice (never
+retained, safe to reuse after the call) and the results (freshly
+allocated, safe to mutate).
