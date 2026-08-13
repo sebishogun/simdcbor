@@ -55,3 +55,38 @@ func TestSkipMatchesUnmarshal(t *testing.T) {
 		_ = se
 	}
 }
+
+// TestSkipAgreesWithUnmarshalOnEveryHead enumerates the whole head space, so
+// the simple-value divergence cannot hide the way it hid from the corpus test.
+//
+// The corpus generator never produced simple values in 0xe0-0xf3, and the
+// random-bytes loop discarded both errors, so a Skip that accepted what
+// Unmarshal rejected looked identical to one that agreed. Skip's own doc
+// comment claimed the accept boundary was the same as Unmarshal's; it was not.
+func TestSkipAgreesWithUnmarshalOnEveryHead(t *testing.T) {
+	for h := 0; h < 256; h++ {
+		b := []byte{byte(h), 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		_, un, uerr := Unmarshal(b)
+		sn, serr := Skip(b)
+		if (uerr == nil) != (serr == nil) {
+			t.Errorf("head %02x: unmarshal err=%v, skip err=%v", h, uerr, serr)
+			continue
+		}
+		if uerr == nil && sn != un {
+			t.Errorf("head %02x: skip span %d, unmarshal consumed %d", h, sn, un)
+		}
+	}
+	// The two-byte simple form, for every payload.
+	for p := 0; p < 256; p++ {
+		b := []byte{0xf8, byte(p), 0}
+		_, un, uerr := Unmarshal(b)
+		sn, serr := Skip(b)
+		if (uerr == nil) != (serr == nil) {
+			t.Errorf("f8 %02x: unmarshal err=%v, skip err=%v", p, uerr, serr)
+			continue
+		}
+		if uerr == nil && sn != un {
+			t.Errorf("f8 %02x: skip span %d, unmarshal consumed %d", p, sn, un)
+		}
+	}
+}
