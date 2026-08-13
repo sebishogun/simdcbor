@@ -39,7 +39,15 @@ func buildShape(kind string, rng *rand.Rand) any {
 
 func BenchmarkSweep(b *testing.B) {
 	rng := rand.New(rand.NewSource(1))
-	dm, _ := cbor.DecOptions{}.DecMode()
+	// fxamacker caps nesting at 32 by default and the deep shape is 40 levels,
+	// so the comparison arm failed outright -- a red benchmark run that the old
+	// bench-check laundered green by piping through tee and ending in an echo.
+	// Raising the cap on its side is what makes the two arms measure the same
+	// work rather than one of them measure an error path.
+	dm, err := cbor.DecOptions{MaxNestedLevels: 64}.DecMode()
+	if err != nil {
+		b.Fatal(err)
+	}
 	for _, kind := range []string{"strings", "numbers", "deep", "hugearray"} {
 		enc, _ := cbor.Marshal(buildShape(kind, rng))
 		b.Run("simdcbor/"+kind, func(b *testing.B) {

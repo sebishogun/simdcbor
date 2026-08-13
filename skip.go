@@ -1,5 +1,7 @@
 package simdcbor
 
+import "github.com/sebishogun/simd"
+
 // Skip advances past the CBOR item at the front of data without building
 // any Go value, returning the number of bytes it spans. It is the hot
 // path for filtering a stream of records -- frame each item, decode only
@@ -19,6 +21,33 @@ package simdcbor
 // when the value model grows to the full space, both paths widen together.
 func Skip(data []byte) (int, error) {
 	return skip(data, 0, 64)
+}
+
+// keyDecodesToString peeks at the item at b[j] and reports whether Unmarshal
+// would produce a Go string from it -- a text or byte string, under any number
+// of tags, since decode returns the tagged value itself.
+//
+// It peeks rather than decodes: the caller still skips the whole item, tags
+// included, so the span is unchanged.
+func keyDecodesToString(b []byte, j int) bool {
+	for depth := 0; depth < 64; depth++ {
+		if j >= len(b) {
+			return false
+		}
+		switch b[j] >> 5 {
+		case mtText, mtBytes:
+			return true
+		case mtTag:
+			_, next, err := readArg(b, j)
+			if err != nil {
+				return false
+			}
+			j = next
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func skip(b []byte, i, depth int) (int, error) {
@@ -54,6 +83,14 @@ func skip(b []byte, i, depth int) (int, error) {
 		if end < j || end > len(b) {
 			return 0, ErrTruncated
 		}
+		if mt == mtText && !simd.ValidUTF8(b[j:end]) {
+			// Content, not framing -- and the only reason Skip looks at it is
+			// the contract that a Skip which succeeds is an item Unmarshal
+			// would decode (architecture.md). Unmarshal rejects a text string
+			// that is not valid UTF-8, so Skip has to as well or the boundary
+			// is not identical. Found by the fuzz on 61 cd.
+			return 0, ErrMalformed
+		}
 		return end, nil
 	case mtArray:
 		if arg > uint64(len(b)-j) {
@@ -72,11 +109,14 @@ func skip(b []byte, i, depth int) (int, error) {
 			return 0, ErrTruncated
 		}
 		for k := 0; k < int(arg); k++ {
-			// The key: text strings only, matching Unmarshal's map[string]any.
-			if j >= len(b) {
-				return 0, ErrTruncated
-			}
-			if b[j]>>5 != mtText {
+			// The key has to be something Unmarshal can put in a
+			// map[string]any. decode returns a Go string for a text string and
+			// for a byte string, and it sees through tags, so a tagged string
+			// is a key too. Each of those three facts cost a fuzz finding.
+			if !keyDecodesToString(b, j) {
+				if j >= len(b) {
+					return 0, ErrTruncated
+				}
 				return 0, ErrMalformed
 			}
 			n, err := skip(b[j:], 0, depth-1)

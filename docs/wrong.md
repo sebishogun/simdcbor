@@ -93,3 +93,69 @@ target supports the full simple-value model, so both paths become
 policy-driven — the subset rejects consistently, the full codec accepts
 consistently — with corpus and assertion work scheduled in the plan's
 decoder task.
+
+## The gate that could not fail was hiding a red benchmark
+
+**Believed.** `make bench-check` was known to be unable to fail — it pipes
+through `tee` with no `pipefail` and then ends in an unconditional `echo`,
+so the status `make` records is the echo's. Recorded as an exposure: a
+flaw waiting for a regression to launder.
+
+**Actually.** It was already laundering one. `BenchmarkSweep` compares
+this decoder against fxamacker on four shapes, and the `deep` shape nests
+40 levels while fxamacker's decoder caps nesting at 32 by default. Its arm
+had been failing outright — `cbor: exceeded max nested level 32` — for as
+long as the shape has existed. The gate reported success every time.
+
+**How it surfaced.** Replacing the target with one that compares against a
+committed baseline and lets the status through. Its first run went red on
+a benchmark, not on a regression.
+
+**Source.** `Makefile` `bench-check`; `sweep_test.go` `BenchmarkSweep`;
+fxamacker `DecOptions.MaxNestedLevels`.
+
+**Consequence.** The comparison arm sets `MaxNestedLevels: 64`, so both
+decoders do the same work on the same bytes rather than one of them timing
+an error path. `scripts/bench-check.sh` compares minima against
+`testdata/bench.txt` with no pipe carrying the verdict, and the baseline
+records the load average it was captured at.
+
+The lesson is narrower than "use pipefail": a gate that cannot fail is not
+merely unprotected, it is actively hiding whatever is already broken, and
+the length of time it has been green says nothing.
+
+## The identical-boundary contract costs more than it looks
+
+**Believed.** `Skip`'s accept/reject boundary is identical to
+`Unmarshal`'s (architecture.md), and the one known violation was the
+simple-value range.
+
+**Actually.** Four violations, three of them found by the fuzz written to
+check the first:
+
+    0xe0-0xf3, 0xf8 xx   simple values outside the value model
+    a1 00 00             a map key that is not a string
+    61 cd                a text string that is not valid UTF-8
+    a1 c9 41 30 30       a map key that is a *tagged* byte string
+
+Each one is `Unmarshal` applying the value model, not CBOR's grammar.
+Honouring the contract therefore means `Skip` has to know the value model
+too: it now rejects unsupported simple values, validates UTF-8 on text
+strings, and peeks through tags to decide whether a key would decode to a
+Go string.
+
+**Source.** `skip.go`; `decode.go`'s `map[string]any` and `simd.ValidUTF8`.
+
+**Consequence.** The contract holds, pinned two ways: a test enumerating
+all 256 head bytes and all 256 two-byte simple payloads, and a fuzz that
+asserts accept-parity and span-parity on every prefix of arbitrary input
+(20.5M executions clean after the fourth fix).
+
+What is not yet measured is the cost. `Skip` was described as pure
+arithmetic, and UTF-8 validation is a scan of the string it is skipping
+past — on text-heavy data that is real work the previous `Skip` never did.
+The machine has not been quiet enough this session to measure it. If it
+proves expensive, the alternative is a different contract rather than a
+different implementation: `Skip` guarantees framing, `Unmarshal`
+guarantees representability, and the fuzz asserts one direction instead of
+two. That choice is open; this entry is where it starts.

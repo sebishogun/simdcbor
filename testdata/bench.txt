@@ -1,0 +1,80 @@
+# captured 2026-08-13T23:30:38Z load:3.53 go version go1.26.2 linux/amd64
+-test.shuffle 1786663838834835924
+goos: linux
+goarch: amd64
+pkg: github.com/sebishogun/simdcbor
+cpu: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S          
+BenchmarkFilterStream/skip-then-decode-1pct-32         	    7065	    174950 ns/op	 501.40 MB/s
+BenchmarkFilterStream/skip-then-decode-1pct-32         	    6958	    174857 ns/op	 501.67 MB/s
+BenchmarkFilterStream/skip-then-decode-1pct-32         	    6310	    173139 ns/op	 506.64 MB/s
+BenchmarkFilterStream/skip-then-decode-1pct-32         	    7084	    173128 ns/op	 506.68 MB/s
+BenchmarkFilterStream/skip-then-decode-1pct-32         	    7246	    173309 ns/op	 506.15 MB/s
+BenchmarkFilterStream/skip-then-decode-1pct-32         	    6754	    176364 ns/op	 497.38 MB/s
+BenchmarkFilterStream/decode-all-32                    	    1609	    713046 ns/op	 123.02 MB/s
+BenchmarkFilterStream/decode-all-32                    	    1752	    713824 ns/op	 122.89 MB/s
+BenchmarkFilterStream/decode-all-32                    	    1665	    712495 ns/op	 123.12 MB/s
+BenchmarkFilterStream/decode-all-32                    	    1644	    724684 ns/op	 121.05 MB/s
+BenchmarkFilterStream/decode-all-32                    	    1566	    724309 ns/op	 121.11 MB/s
+BenchmarkFilterStream/decode-all-32                    	    1753	    724453 ns/op	 121.08 MB/s
+BenchmarkSweep/simdcbor/strings-32                     	  821122	      1314 ns/op	 151.41 MB/s
+BenchmarkSweep/simdcbor/strings-32                     	  962055	      1312 ns/op	 151.72 MB/s
+BenchmarkSweep/simdcbor/strings-32                     	 1000000	      1360 ns/op	 146.30 MB/s
+BenchmarkSweep/simdcbor/strings-32                     	  911296	      1306 ns/op	 152.39 MB/s
+BenchmarkSweep/simdcbor/strings-32                     	  930530	      1328 ns/op	 149.85 MB/s
+BenchmarkSweep/simdcbor/strings-32                     	  796009	      1365 ns/op	 145.78 MB/s
+BenchmarkSweep/fxamacker/strings-32                    	  509994	      2439 ns/op	  81.58 MB/s
+BenchmarkSweep/fxamacker/strings-32                    	  433998	      2446 ns/op	  81.34 MB/s
+BenchmarkSweep/fxamacker/strings-32                    	  447220	      2348 ns/op	  84.76 MB/s
+BenchmarkSweep/fxamacker/strings-32                    	  566449	      2365 ns/op	  84.16 MB/s
+BenchmarkSweep/fxamacker/strings-32                    	  517257	      2324 ns/op	  85.63 MB/s
+BenchmarkSweep/fxamacker/strings-32                    	  550065	      2372 ns/op	  83.89 MB/s
+BenchmarkSweep/simdcbor/numbers-32                     	  421278	      3634 ns/op	 495.88 MB/s
+BenchmarkSweep/simdcbor/numbers-32                     	  352922	      2931 ns/op	 614.81 MB/s
+BenchmarkSweep/simdcbor/numbers-32                     	  402153	      3011 ns/op	 598.55 MB/s
+BenchmarkSweep/simdcbor/numbers-32                     	  380385	      3002 ns/op	 600.33 MB/s
+BenchmarkSweep/simdcbor/numbers-32                     	  354518	      2996 ns/op	 601.46 MB/s
+BenchmarkSweep/simdcbor/numbers-32                     	  394772	      2947 ns/op	 611.38 MB/s
+BenchmarkSweep/fxamacker/numbers-32                    	  255231	      4643 ns/op	 388.12 MB/s
+BenchmarkSweep/fxamacker/numbers-32                    	  243532	      4647 ns/op	 387.80 MB/s
+BenchmarkSweep/fxamacker/numbers-32                    	  234520	      4867 ns/op	 370.25 MB/s
+BenchmarkSweep/fxamacker/numbers-32                    	  263797	      4612 ns/op	 390.76 MB/s
+BenchmarkSweep/fxamacker/numbers-32                    	  259514	      4577 ns/op	 393.73 MB/s
+BenchmarkSweep/fxamacker/numbers-32                    	  256929	      4662 ns/op	 386.55 MB/s
+BenchmarkSweep/simdcbor/deep-32                        	  947797	      1235 ns/op	  36.44 MB/s
+BenchmarkSweep/simdcbor/deep-32                        	  948550	      1204 ns/op	  37.38 MB/s
+BenchmarkSweep/simdcbor/deep-32                        	  938325	      1235 ns/op	  36.44 MB/s
+BenchmarkSweep/simdcbor/deep-32                        	 1000000	      1200 ns/op	  37.50 MB/s
+BenchmarkSweep/simdcbor/deep-32                        	  909574	      1224 ns/op	  36.76 MB/s
+BenchmarkSweep/simdcbor/deep-32                        	 1000000	      1234 ns/op	  36.48 MB/s
+BenchmarkSweep/fxamacker/deep-32                       	  597896	      2023 ns/op	  22.25 MB/s
+BenchmarkSweep/fxamacker/deep-32                       	  576990	      2019 ns/op	  22.29 MB/s
+BenchmarkSweep/fxamacker/deep-32                       	  597355	      2069 ns/op	  21.75 MB/s
+BenchmarkSweep/fxamacker/deep-32                       	  591187	      2048 ns/op	  21.98 MB/s
+BenchmarkSweep/fxamacker/deep-32                       	  606781	      2006 ns/op	  22.43 MB/s
+BenchmarkSweep/fxamacker/deep-32                       	  645582	      1937 ns/op	  23.23 MB/s
+BenchmarkSweep/simdcbor/hugearray-32                   	   14752	     81877 ns/op	 549.64 MB/s
+BenchmarkSweep/simdcbor/hugearray-32                   	   14527	     83288 ns/op	 540.33 MB/s
+BenchmarkSweep/simdcbor/hugearray-32                   	   13672	     85399 ns/op	 526.98 MB/s
+BenchmarkSweep/simdcbor/hugearray-32                   	   14335	     84119 ns/op	 534.99 MB/s
+BenchmarkSweep/simdcbor/hugearray-32                   	   14342	     84067 ns/op	 535.32 MB/s
+BenchmarkSweep/simdcbor/hugearray-32                   	   14118	     87194 ns/op	 516.13 MB/s
+BenchmarkSweep/fxamacker/hugearray-32                  	   10000	    112197 ns/op	 401.11 MB/s
+BenchmarkSweep/fxamacker/hugearray-32                  	   10000	    117522 ns/op	 382.93 MB/s
+BenchmarkSweep/fxamacker/hugearray-32                  	   10531	    113575 ns/op	 396.24 MB/s
+BenchmarkSweep/fxamacker/hugearray-32                  	   10000	    112128 ns/op	 401.35 MB/s
+BenchmarkSweep/fxamacker/hugearray-32                  	   10000	    110412 ns/op	 407.59 MB/s
+BenchmarkSweep/fxamacker/hugearray-32                  	   10000	    109154 ns/op	 412.29 MB/s
+BenchmarkUnmarshal/simdcbor-32                         	 1754469	       671.2 ns/op
+BenchmarkUnmarshal/simdcbor-32                         	 1650841	       748.5 ns/op
+BenchmarkUnmarshal/simdcbor-32                         	 1370684	       830.9 ns/op
+BenchmarkUnmarshal/simdcbor-32                         	 1707316	       688.3 ns/op
+BenchmarkUnmarshal/simdcbor-32                         	 1750886	       681.5 ns/op
+BenchmarkUnmarshal/simdcbor-32                         	 1734597	       673.9 ns/op
+BenchmarkUnmarshal/fxamacker-32                        	 1000000	      1008 ns/op
+BenchmarkUnmarshal/fxamacker-32                        	 1000000	      1007 ns/op
+BenchmarkUnmarshal/fxamacker-32                        	  963796	      1051 ns/op
+BenchmarkUnmarshal/fxamacker-32                        	 1000000	      1079 ns/op
+BenchmarkUnmarshal/fxamacker-32                        	 1000000	      1037 ns/op
+BenchmarkUnmarshal/fxamacker-32                        	 1000000	      1025 ns/op
+PASS
+ok  	github.com/sebishogun/simdcbor	84.656s
