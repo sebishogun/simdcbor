@@ -43,6 +43,7 @@ type Decoder struct {
 	// it, but it carries it for the value layer that does.
 	keys value.KeyMode
 	dup  DuplicatePolicy
+	tags TagMode
 }
 
 // New returns a Decoder over b.
@@ -178,7 +179,21 @@ func (d *Decoder) decode(depth int) (value.Value, error) {
 		if err != nil {
 			return value.Value{}, err
 		}
-		return value.FromTag(arg, inner), nil
+		if d.tags == TagDiscard {
+			// Lossy on purpose, and only when asked for: tag 1 around an
+			// integer becomes that integer, so a re-encode writes a number
+			// where a timestamp was.
+			return inner, nil
+		}
+		tagged := value.FromTag(arg, inner)
+		if d.tags == TagInterpret {
+			// Interpretation validates the content; it does not replace the
+			// generic form, so the original bytes can still be reproduced.
+			if _, _, err := Interpret(tagged); err != nil {
+				return value.Value{}, err
+			}
+		}
+		return tagged, nil
 	default:
 		return d.simple(ai, arg)
 	}
