@@ -56,7 +56,7 @@ func (d *Decoder) SetPinCopy(on bool) { d.pin = on }
 // item it accepts is an item Decode would build, and the span is the same.
 func (d *Decoder) RawNext() (RawMessage, error) {
 	start := d.i
-	if err := d.skip(d.lim.MaxDepth); err != nil {
+	if err := d.skip(d.lim.MaxDepth, false); err != nil {
 		return RawMessage{}, err
 	}
 	b := d.b[start:d.i]

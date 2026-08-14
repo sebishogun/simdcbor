@@ -449,10 +449,11 @@ func (e *Encoder) sortPairs(f frame) error {
 // is the only way to check a concatenation assembled chunk by chunk.
 func (e *Encoder) validIndefiniteText() bool {
 	d := New(e.buf, DefaultLimits())
-	// Walk to the last item: the buffer may hold a whole document.
+	// The strict arm, because the whole point of this walk is to check the
+	// content: the framing arm would step over invalid UTF-8 without looking.
 	for {
 		start := d.Offset()
-		if _, err := d.Skip(); err != nil {
+		if _, err := d.SkipStrict(); err != nil {
 			return false
 		}
 		if !d.More() {

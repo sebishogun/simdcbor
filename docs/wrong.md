@@ -271,3 +271,51 @@ The 2.7% and the 20 allocations are the price of holding the bytes, not a
 regression to fix. What would be a mistake is presenting lazy values as a
 speed win over skipping; they are not, and the benchmark is committed so
 the claim cannot drift back.
+
+## The adapter through the value model was 2-3x slower, and the gate said so
+
+**Believed.** Reimplementing the shipped API as a projection over the full
+codec would cost a little and buy a lot: one walk instead of two, so the
+Skip/Unmarshal divergence could not come back.
+
+**Actually.** It cost 2-3x. The first version decoded into `value.Value`
+and projected afterwards, which is two allocations and two passes per item
+to produce the same answer. `make bench-check` went red on the commit that
+landed it:
+
+    BenchmarkSweep/simdcbor/strings     1306 -> 3887 ns/op   +197.6%
+    BenchmarkUnmarshal/simdcbor        671.2 -> 2039 ns/op   +203.8%
+    BenchmarkSweep/simdcbor/numbers     2931 -> 7321 ns/op   +149.8%
+    BenchmarkSweep/simdcbor/hugearray  81877 ->178730 ns/op  +118.3%
+
+This is the gate that could not fail three days ago, catching the first
+regression it was ever pointed at.
+
+**How it surfaced.** Running it, on the commit that caused it.
+
+**Source.** `adapter.go`'s `project`; `internal/codec/json.go`.
+
+**Consequence.** The defect that started this refactor was two *walks*
+disagreeing about well-formedness, not two *builders*. A second builder on
+the same walk shares the head reader, the limits and the accept boundary,
+so the disagreement still has nowhere to live, and the intermediate value
+is not built at all. `DecodeJSON` is that builder.
+
+Instructions retired against the pre-adapter implementation, two runs
+each, spread under 0.5%:
+
+    hugearray   6,228 M -> 4,416 M   -29.1%
+    numbers       237.7 M -> 194.0 M -18.4%
+    strings       100.1 M ->  87.2 M -12.9%
+    deep           98.6 M -> 102.4 M  +3.9%
+
+So the rewrite is faster than the code it replaced on every realistic
+shape, and 3.9% slower on 40-level nesting, where per-item overhead
+dominates and the walk now pays a call for the head plus the total-item
+count. The wall-clock gate reported that row as +23.8%; instructions say
++3.9%, and the difference is the machine — which is why the instruction
+count is the number recorded here.
+
+**The `project` path stays** for callers of the value model, which is
+where a full-fidelity value is actually wanted. It is simply not on the
+adapter's path any more.

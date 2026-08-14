@@ -8,6 +8,12 @@ import (
 
 func skipSpan(b []byte) (int, error) {
 	d := New(b, Limits{})
+	return d.SkipStrict()
+}
+
+// framingSpan is the cheap arm: it judges framing and accepts a superset.
+func framingSpan(b []byte) (int, error) {
+	d := New(b, Limits{})
 	return d.Skip()
 }
 
@@ -183,5 +189,33 @@ func TestSkipParityOnGeneratedCorpus(t *testing.T) {
 		if derr == nil && dn != sn {
 			t.Fatalf("%x: decode consumed %d, skip spanned %d", b, dn, sn)
 		}
+	}
+}
+
+// The framing arm accepts everything Decode does, with the same span, and more
+// besides. The direction is the contract; the extra is content it does not
+// look at.
+func TestFramingSkipIsASuperset(t *testing.T) {
+	for h := 0; h < 256; h++ {
+		b := []byte{byte(h), 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		dn, derr := decodeSpan(b)
+		fn, ferr := framingSpan(b)
+		if derr == nil {
+			if ferr != nil {
+				t.Errorf("head %02x: decode built it, framing skip refused: %v", h, ferr)
+				continue
+			}
+			if dn != fn {
+				t.Errorf("head %02x: decode %d, framing skip %d", h, dn, fn)
+			}
+		}
+	}
+	// Invalid UTF-8 is the case that separates the two arms.
+	bad, _ := hex.DecodeString("61cd")
+	if _, err := framingSpan(bad); err != nil {
+		t.Fatalf("framing skip refused invalid UTF-8: %v", err)
+	}
+	if _, err := skipSpan(bad); err == nil {
+		t.Fatal("strict skip accepted invalid UTF-8")
 	}
 }

@@ -1,0 +1,45 @@
+00 0 n=1
+17 23 n=1
+1818 24 n=2
+1903e8 1000 n=3
+1bffffffffffffffff 1.8446744073709552e+19 n=9
+20 -1 n=1
+3863 -100 n=2
+3bffffffffffffffff -1.8446744073709552e+19 n=9
+40 [] n=1
+4401020304 [1 2 3 4] n=5
+60 "" n=1
+6161 "a" n=2
+6449455446 "IETF" n=5
+64f0908591 "𐅑" n=5
+80 [] n=1
+83010203 [1 2 3] n=4
+8301820203820405 [1 [2 3] [4 5]] n=8
+a0 map[] n=1
+a26161016162820203 map[a:1 b:[2 3]] n=9
+a201020304 ERR simdcbor: malformed
+f4 bool(false) n=1
+f5 bool(true) n=1
+f6 nil n=1
+f7 nil n=1
+e0 ERR simdcbor: malformed
+f820 ERR simdcbor: malformed
+f90000 0 n=3
+f93c00 1 n=3
+fa47c35000 100000 n=5
+fb400921fb54442d18 3.141592653589793 n=9
+c11a514b67b0 1.36389624e+09 n=6
+d9d9f701 1 n=4
+9fff [] n=2
+9f00ff [0] n=3
+bfff map[] n=2
+bf6161016162820203ff map[a:1 b:[2 3]] n=10
+5f42010243030405ff [1 2 3 4 5] n=9
+7f61616162ff "ab" n=6
+1c ERR simdcbor: malformed
+1f ERR simdcbor: malformed
+ff ERR simdcbor: malformed
+81ff ERR simdcbor: malformed
+f800 ERR simdcbor: malformed
+61cd ERR simdcbor: malformed
+a16101616102 map[:"a"] n=5

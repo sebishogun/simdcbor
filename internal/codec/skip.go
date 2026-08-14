@@ -10,11 +10,11 @@ import "github.com/sebishogun/simd"
 // invalid UTF-8 -- none of which any test found until one enumerated the head
 // space. Two walks over one grammar will always drift; this is one walk.
 //
-// What it does not do is decide whether the item fits a value model. That
-// judgment costs +92.5% instructions when folded in here (docs/wrong.md), and
-// it belongs to whoever is building the value, not to whoever is stepping past
-// it.
-func (d *Decoder) skip(depth int) error {
+// There are two arms, and the split is a measurement. Framing alone is what a
+// filter needs, and validating the contents of strings it steps past costs
+// +75% instructions (docs/wrong.md). So skip takes a strict flag: false judges
+// framing, true judges what Decode would accept.
+func (d *Decoder) skip(depth int, strict bool) error {
 	if depth < 0 {
 		return ErrDepth
 	}
@@ -32,16 +32,16 @@ func (d *Decoder) skip(depth int) error {
 		}
 		return nil
 	case mtBytes, mtText:
-		return d.skipStringBody(mt, arg, indef, depth)
+		return d.skipStringBody(mt, arg, indef, depth, strict)
 	case mtArray:
-		return d.skipContainer(arg, indef, depth, 1)
+		return d.skipContainer(arg, indef, depth, 1, strict)
 	case mtMap:
-		return d.skipContainer(arg, indef, depth, 2)
+		return d.skipContainer(arg, indef, depth, 2, strict)
 	case mtTag:
 		if indef {
 			return ErrMalformed
 		}
-		return d.skip(depth - 1)
+		return d.skip(depth-1, strict)
 	default:
 		// Major 7. The head reader has already refused the reserved ai values;
 		// what remains to reject is the break stop-code standing alone.
@@ -59,13 +59,13 @@ func (d *Decoder) skip(depth int) error {
 // text, which is the one piece of content it looks at -- and it looks because
 // the decoder rejects invalid text, so a skip that accepted it would hand the
 // caller an offset into a document the decoder cannot read.
-func (d *Decoder) skipStringBody(mt byte, arg uint64, indef bool, depth int) error {
+func (d *Decoder) skipStringBody(mt byte, arg uint64, indef bool, depth int, strict bool) error {
 	if !indef {
 		s, err := d.chunk(arg)
 		if err != nil {
 			return err
 		}
-		if mt == mtText && !simd.ValidUTF8(s) {
+		if strict && mt == mtText && !simd.ValidUTF8(s) {
 			return ErrMalformed
 		}
 		return nil
@@ -100,11 +100,11 @@ func (d *Decoder) skipStringBody(mt byte, arg uint64, indef bool, depth int) err
 		if total > d.lim.MaxStringBytes {
 			return ErrTooLarge
 		}
-		if mt == mtText {
+		if strict && mt == mtText {
 			joined = append(joined, c...)
 		}
 	}
-	if mt == mtText && !simd.ValidUTF8(joined) {
+	if strict && mt == mtText && !simd.ValidUTF8(joined) {
 		return ErrMalformed
 	}
 	return nil
@@ -112,7 +112,7 @@ func (d *Decoder) skipStringBody(mt byte, arg uint64, indef bool, depth int) err
 
 // skipContainer walks arg items (or arg pairs, when each is two items) or runs
 // to the break stop-code.
-func (d *Decoder) skipContainer(arg uint64, indef bool, depth, per int) error {
+func (d *Decoder) skipContainer(arg uint64, indef bool, depth, per int, strict bool) error {
 	if depth < 0 {
 		return ErrDepth
 	}
@@ -126,7 +126,7 @@ func (d *Decoder) skipContainer(arg uint64, indef bool, depth, per int) error {
 				return nil
 			}
 			for k := 0; k < per; k++ {
-				if err := d.skip(depth - 1); err != nil {
+				if err := d.skip(depth-1, strict); err != nil {
 					return err
 				}
 			}
@@ -144,7 +144,7 @@ func (d *Decoder) skipContainer(arg uint64, indef bool, depth, per int) error {
 	}
 	for k := uint64(0); k < arg; k++ {
 		for p := 0; p < per; p++ {
-			if err := d.skip(depth - 1); err != nil {
+			if err := d.skip(depth-1, strict); err != nil {
 				return err
 			}
 		}

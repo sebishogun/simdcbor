@@ -76,11 +76,23 @@ func (d *Decoder) Decode() (value.Value, error) {
 }
 
 // Skip advances past the next item without building it, returning its span.
-// It runs the same machine with the build step removed, so an item it accepts
-// is an item Decode would build.
+//
+// It judges framing, so it accepts a superset of what Decode does: it does not
+// check whether text is valid UTF-8, which costs +75% instructions on a
+// filtering workload for content the caller is discarding unread.
 func (d *Decoder) Skip() (int, error) {
 	start := d.i
-	if err := d.skip(d.lim.MaxDepth); err != nil {
+	if err := d.skip(d.lim.MaxDepth, false); err != nil {
+		return 0, err
+	}
+	return d.i - start, nil
+}
+
+// SkipStrict is Skip with Decode's boundary: an item it accepts is an item
+// Decode would build, with the same span.
+func (d *Decoder) SkipStrict() (int, error) {
+	start := d.i
+	if err := d.skip(d.lim.MaxDepth, true); err != nil {
 		return 0, err
 	}
 	return d.i - start, nil
