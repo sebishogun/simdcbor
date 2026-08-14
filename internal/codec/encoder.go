@@ -484,12 +484,51 @@ func (e *Encoder) WriteValue(v value.Value) error {
 		return e.WriteNegMagnitude(n)
 	case value.Bytes:
 		b, _ := v.AsBytes()
+		if v.Indefinite() && !e.mode.deterministic() {
+			// One chunk holding the concatenation: the chunk boundaries the
+			// original used are not recoverable from the value, and the RFC
+			// does not make them meaningful.
+			if err := e.StartIndefiniteBytes(); err != nil {
+				return err
+			}
+			if len(b) > 0 {
+				if err := e.WriteChunk(b); err != nil {
+					return err
+				}
+			}
+			return e.EndBytes()
+		}
 		return e.WriteBytes(b)
 	case value.Text:
 		s, _ := v.AsText()
+		if v.Indefinite() && !e.mode.deterministic() {
+			if err := e.StartIndefiniteText(); err != nil {
+				return err
+			}
+			if len(s) > 0 {
+				if err := e.WriteChunk([]byte(s)); err != nil {
+					return err
+				}
+			}
+			return e.EndText()
+		}
 		return e.WriteText(s)
 	case value.Array:
 		a, _ := v.AsArray()
+		// The indefinite form is reproduced only where it is legal: a
+		// deterministic encoding requires definite lengths, so the mode wins
+		// over what the value remembers.
+		if v.Indefinite() && !e.mode.deterministic() {
+			if err := e.StartIndefiniteArray(); err != nil {
+				return err
+			}
+			for _, el := range a {
+				if err := e.WriteValue(el); err != nil {
+					return err
+				}
+			}
+			return e.EndArray()
+		}
 		if err := e.StartArray(uint64(len(a))); err != nil {
 			return err
 		}
@@ -501,6 +540,20 @@ func (e *Encoder) WriteValue(v value.Value) error {
 		return e.EndArray()
 	case value.Map:
 		m, _ := v.AsMap()
+		if v.Indefinite() && !e.mode.deterministic() {
+			if err := e.StartIndefiniteMap(); err != nil {
+				return err
+			}
+			for _, kv := range m {
+				if err := e.WriteValue(kv.Key); err != nil {
+					return err
+				}
+				if err := e.WriteValue(kv.Value); err != nil {
+					return err
+				}
+			}
+			return e.EndMap()
+		}
 		if err := e.StartMap(uint64(len(m))); err != nil {
 			return err
 		}

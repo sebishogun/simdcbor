@@ -37,6 +37,11 @@ func TestEncoderRoundTripsVectors(t *testing.T) {
 		"f4", "f5", "f6", "f7", "e0", "f0", "f3", "f820", "f8ff",
 		"f90000", "f93c00", "f97e00", "fa47c35000", "fb400921fb54442d18",
 		"f9c400", "fbc010666666666666",
+		// The indefinite forms round-trip as themselves: the value model
+		// records that the item arrived that way, so a re-encode does not
+		// quietly turn 9f 00 ff into 81 00.
+		"9fff", "9f00ff", "9f018202039f0405ffff", "bfff", "bf616101616202ff",
+		"5fff", "7fff",
 	} {
 		t.Run(h, func(t *testing.T) {
 			in, _ := hex.DecodeString(h)
@@ -62,6 +67,60 @@ func TestEncoderRoundTripsVectors(t *testing.T) {
 				t.Fatalf("round trip changed the value")
 			}
 		})
+	}
+}
+
+// A chunked string re-encodes as a single chunk, and that is the design rather
+// than a defect: the RFC says the value of an indefinite string is the
+// concatenation of its chunks, so where the boundaries fell carries no meaning
+// and the value model does not keep it. What must survive is the value and the
+// fact that the encoding was indefinite -- both are asserted here, because
+// asserting byte equality would be asserting something the model deliberately
+// does not promise.
+func TestEncoderChunkedStringsRejoin(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want string
+	}{
+		{"5f42010243030405ff", "5f450102030405ff"},
+		{"7f657374726561646d696e67ff", "7f6973747265616d696e67ff"},
+	} {
+		in, _ := hex.DecodeString(c.in)
+		v, err := New(in, Limits{}).Decode()
+		if err != nil {
+			t.Fatalf("%s: %v", c.in, err)
+		}
+		if !v.Indefinite() {
+			t.Fatalf("%s: the indefinite form was forgotten", c.in)
+		}
+		out := encodeValue(t, v)
+		if hex.EncodeToString(out) != c.want {
+			t.Fatalf("%s re-encoded as %x, want %s", c.in, out, c.want)
+		}
+		// The value is unchanged, which is what the model promises.
+		v2, err := New(out, Limits{}).Decode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b1, _ := v.AsBytes()
+		b2, _ := v2.AsBytes()
+		if !bytes.Equal(b1, b2) {
+			t.Fatalf("%s: value changed, %x to %x", c.in, b1, b2)
+		}
+	}
+	// A deterministic mode drops the indefinite form entirely, because RFC
+	// 8949 requires definite lengths there.
+	in, _ := hex.DecodeString("9f00ff")
+	v, _ := New(in, Limits{}).Decode()
+	e := NewEncoder(nil)
+	e.SetMode(CoreDeterministic)
+	must(t, e.WriteValue(v))
+	out, err := e.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hex.EncodeToString(out) != "8100" {
+		t.Fatalf("deterministic mode emitted %x, want 8100", out)
 	}
 }
 

@@ -62,6 +62,13 @@ type Value struct {
 	b   []byte     // Bytes, Text
 	a   []Value    // Array, and the single tagged value for TagKind
 	m   []KeyValue // Map
+	// indef records that the item arrived in indefinite-length form. It is an
+	// encoding fact, kept for the same reason float width is: a re-encode has
+	// to reproduce what it read, and diagnostic notation has to show it.
+	// Deterministic encodings ignore it -- RFC 8949 requires definite lengths
+	// there -- and so does key identity, since an indefinite array and a
+	// definite one holding the same elements are the same value.
+	indef bool
 }
 
 // KeyValue is one entry of a Map. Maps keep their order: CBOR maps are
@@ -103,6 +110,19 @@ func FromInt(i int64) Value {
 
 // FromBytes returns a CBOR byte string. The slice is retained, not copied.
 func FromBytes(b []byte) Value { return Value{kind: Bytes, b: b} }
+
+// Indefinite reports whether the item arrived in indefinite-length form.
+func (v Value) Indefinite() bool { return v.indef }
+
+// AsIndefinite returns a copy of v marked as indefinite-length. It is
+// meaningful only for the four container kinds.
+func (v Value) AsIndefinite() Value {
+	switch v.kind {
+	case Bytes, Text, Array, Map:
+		v.indef = true
+	}
+	return v
+}
 
 // FromText returns a CBOR text string.
 func FromText(s string) Value { return Value{kind: Text, b: []byte(s)} }

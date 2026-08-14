@@ -173,10 +173,16 @@ func (d *Decoder) decode(depth int) (value.Value, error) {
 		if err != nil {
 			return value.Value{}, err
 		}
+		var sv value.Value
 		if mt == mtText {
-			return value.FromText(string(b)), nil
+			sv = value.FromText(string(b))
+		} else {
+			sv = value.FromBytes(b)
 		}
-		return value.FromBytes(b), nil
+		if indef {
+			sv = sv.AsIndefinite()
+		}
+		return sv, nil
 	case mtArray:
 		return d.array(arg, indef, depth)
 	case mtMap:
@@ -322,7 +328,7 @@ func (d *Decoder) array(arg uint64, indef bool, depth int) (value.Value, error) 
 				return value.Value{}, err
 			}
 			if done {
-				return value.FromArray(out...), nil
+				return value.FromArray(out...).AsIndefinite(), nil
 			}
 			v, err := d.decode(depth - 1)
 			if err != nil {
@@ -365,7 +371,11 @@ func (d *Decoder) mapValue(arg uint64, indef bool, depth int) (value.Value, erro
 				return value.Value{}, err
 			}
 			if done {
-				return d.applyDuplicatePolicy(out)
+				m, err := d.applyDuplicatePolicy(out)
+				if err != nil {
+					return value.Value{}, err
+				}
+				return m.AsIndefinite(), nil
 			}
 			kv, err := d.pair(depth)
 			if err != nil {
