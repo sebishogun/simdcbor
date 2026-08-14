@@ -232,3 +232,42 @@ mistake in one word.
 The vectors found a second defect in the same run: a definite-length text
 string was not being validated as UTF-8, only a chunked one was. Both are
 pinned by the vector table now.
+
+## Lazy values did not beat skipping, and the entry is the deliverable
+
+**Believed.** Framing items as byte ranges and decoding only the matches
+would beat skip-then-decode on a filtering workload: the plan predicted an
+allocation drop and asked for the delta.
+
+**Actually.** It is marginally slower and allocates slightly more.
+Instructions retired over 2,000 iterations of a 2,000-record stream with a
+1% match rate, two runs each, spread under 0.05%:
+
+    decode-all               15,773 M   1,200,008 B/op   8,000 allocs/op
+    skip-then-decode-1pct     5,234 M      12,000 B/op      80 allocs/op
+    frame-then-decode-1pct    5,374 M      13,920 B/op     100 allocs/op
+    frame-only                5,150 M           0 B/op       0 allocs/op
+
+Framing costs 2.7% more instructions than skipping and 20 more allocations
+per run, because materializing a frame builds a fresh decoder over its
+bytes where the skip path decodes in place. The prediction was that lazy
+values would drop allocations; against skip-then-decode there were almost
+none left to drop — that work had already been done.
+
+**How it surfaced.** Running the benchmark the plan asked for, on the
+implementation the plan asked for.
+
+**Source.** `internal/codec/raw.go`, `internal/codec/bench_test.go`.
+
+**Consequence.** The lazy path stays, but not for the reason it was
+proposed. Its value is `frame-only`: 5,150 M instructions and **zero
+allocations** to frame every record while keeping each one's encoded bytes.
+Skip cannot do that at all — it steps over the bytes and forgets them — so
+a caller that needs to forward, hash, store or defer a record has no
+cheaper option, and one that only needs to decode a few should keep using
+skip.
+
+The 2.7% and the 20 allocations are the price of holding the bytes, not a
+regression to fix. What would be a mistake is presenting lazy values as a
+speed win over skipping; they are not, and the benchmark is committed so
+the claim cannot drift back.

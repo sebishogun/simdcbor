@@ -44,7 +44,17 @@ type Decoder struct {
 	keys value.KeyMode
 	dup  DuplicatePolicy
 	tags TagMode
+
+	// pin makes RawMessage copy rather than borrow; borrowUnsafe marks a
+	// decoder whose buffer is reused, so borrowing from it is refused.
+	pin          bool
+	borrowUnsafe bool
+	raws         []RawMessage
 }
+
+// markBorrowUnsafe records that this decoder's buffer is reused, so a
+// RawMessage may not borrow from it. The stream sets it.
+func (d *Decoder) markBorrowUnsafe() { d.borrowUnsafe = true }
 
 // New returns a Decoder over b.
 func New(b []byte, lim Limits) *Decoder {

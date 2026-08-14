@@ -25,6 +25,7 @@ type Stream struct {
 	err  error // sticky read error, delivered after the buffered items
 	max  int
 	done bool
+	pin  bool
 }
 
 // DefaultMaxBuffer caps how much one item may hold in the stream's buffer. An
@@ -84,6 +85,44 @@ func (s *Stream) Next() (value.Value, error) {
 		}
 	}
 }
+
+// RawNext frames the next item from the stream without building it.
+//
+// The stream's buffer is reused, so the bytes are copied unless the caller has
+// a reason not to: a borrowed subslice would be overwritten by the next refill,
+// and the caller would have no way to tell.
+func (s *Stream) RawNext() (RawMessage, error) {
+	for {
+		if s.off < s.end {
+			d := New(s.buf[s.off:s.end], s.lim)
+			d.SetPinCopy(s.pin)
+			d.markBorrowUnsafe()
+			r, derr := d.RawNext()
+			if derr == nil {
+				s.off += d.Offset()
+				return r, nil
+			}
+			if derr != ErrTruncated {
+				return RawMessage{}, derr
+			}
+			if s.done {
+				return RawMessage{}, ErrTruncated
+			}
+		} else if s.done {
+			return RawMessage{}, io.EOF
+		}
+		if err := s.fill(); err != nil {
+			if s.off >= s.end {
+				return RawMessage{}, err
+			}
+		}
+	}
+}
+
+// SetPinCopy makes the stream's raw messages carry their own copy. Without it
+// RawNext refuses, because borrowing from a buffer that refills is a use-after
+// -free with extra steps.
+func (s *Stream) SetPinCopy(on bool) { s.pin = on }
 
 // SkipNext advances past the next item without building it.
 func (s *Stream) SkipNext() (int, error) {
