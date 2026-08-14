@@ -1,8 +1,37 @@
 # Verification
 
-How this repository proves what it claims, now and at full-codec
-completion. Rule of thumb throughout: **a claim is a test or a measured
-record, or it is not made.**
+How this repository proves what it claims. Rule of thumb throughout: **a
+claim is a test or a measured record, or it is not made.**
+
+## Current state, 2026-08-14
+
+The full codec is live and the shipped API is an adapter over it. Every
+gate below is green on amd64, toolchain `go1.26.2`:
+
+```
+go test ./...                      # root, value, internal/codec, diag
+go vet ./...
+go test -race ./...
+go test -run '^$' -fuzz FuzzUnmarshalNeverPanics -fuzztime 2m .
+make bench-check                   # against testdata/bench.txt, no pipe carries the verdict
+GOARCH={arm64,386,ppc64le,s390x} go build ./... && go vet ./...
+```
+
+Cross-architecture is build-and-vet only; `-race` runs on amd64, which is
+the architecture this machine has. The 386 lane earned its place
+immediately: it caught an untyped `1 << 32` in a test corpus that
+overflows `int` on a 32-bit build.
+
+Boundary parity between `Unmarshal` and `SkipStrict` is asserted over the
+whole head space (all 256 heads, all 256 two-byte simple payloads), over
+the RFC vectors, over 200k random inputs and 50k generated documents. It
+is also structural: both are one walk with different build steps, so the
+four divergences that lived here before have nowhere left to live.
+
+The hot path was reviewed in disassembly, not assumed: `decodeJSON` is 328
+instructions with no bounds check, no indirect call and no multiply; the
+head reader is 182 with eight bounds checks, which are the length guards
+themselves.
 
 ## Shipped gates
 

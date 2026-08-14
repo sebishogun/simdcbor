@@ -126,6 +126,14 @@ the length of time it has been green says nothing.
 
 ## The identical-boundary contract costs more than it looks
 
+**Closed 2026-08-14.** The four divergences are gone, structurally rather
+than by repair: the root package's decoder and skipper were replaced by
+one walk in `internal/codec` with two build steps, so there is no second
+implementation to drift. `Skip` keeps the framing boundary and
+`SkipStrict` the decoding one, which is the split the measurement below
+forced.
+
+
 **Believed.** `Skip`'s accept/reject boundary is identical to
 `Unmarshal`'s (architecture.md), and the one known violation was the
 simple-value range.

@@ -39,7 +39,7 @@ what is and is not supported, from the source:
 | unsigned, negative, half/single/double floats → `float64` | integer-exact decode (all numbers are `float64`) |
 | tags (consumed and **discarded**; inner item decoded) | tag numbers, tag values |
 | string map keys | arbitrary keys (non-string key → `ErrMalformed`) |
-| simple values `false`/`true`/`null`, `undefined`→`nil`, floats 25–27 | simple values 0–19 (`0xe0`–`0xf3`) and the `0xf8` form: `Unmarshal` rejects, **`Skip` accepts** — a known inconsistency (see Skip below) |
+| simple values `false`/`true`/`null`, `undefined`→`nil`, floats 25–27 | simple values 0–19 (`0xe0`–`0xf3`) and the `0xf8` form: no JSON shape holds them, so `Unmarshal` rejects and `simdcbor/value` represents them |
 | duplicate keys: last value wins | duplicate policies (error / first-wins) |
 | depth up to 64 (exceeding → `ErrMalformed`) | configurable limits |
 | `Marshal` types: `nil`, `bool`, `string`, `[]byte`, `float64`, `float32`, `int`, `int64`, `uint64`, `[]any`, `map[string]any` | `uint` and other fixed-width ints, arbitrary types |
@@ -72,11 +72,22 @@ notation — is designed and planned: [design](docs/plans/2026-08-13-simdcbor-pr
 - **`Skip(data)`** advances past an item without building it — the
   filtering hot path. Decoding only 1 record in 100 of a stream and
   skipping the rest runs **8.4x** faster than decoding all of them
-  (79 us vs 662 us), because Skip allocates nothing. One caveat: `Skip`
-  today accepts simple values (`0xe0`–`0xf3`, `0xf8` + byte) that
-  `Unmarshal` rejects — a known inconsistency, recorded in
-  [docs/wrong.md](docs/wrong.md) and scheduled as Stage 0 of the
-  [production plan](docs/plans/2026-08-13-simdcbor-production.md).
+  (79 us vs 662 us), because Skip allocates nothing.
+
+  `Skip` judges **framing**: the head is a head, the lengths fit, the
+  nesting closes. It therefore accepts a superset of what `Unmarshal`
+  builds — an integer map key, a simple value outside the JSON shapes,
+  text that is not valid UTF-8. **`SkipStrict`** carries `Unmarshal`'s
+  boundary exactly, for callers who need a skipped item to be a
+  decodable one.
+
+  The split is a measurement, not a preference. Folding the value-model
+  checks into `Skip` costs +92.5% instructions on the filter benchmark,
+  three quarters of it validating the contents of strings the caller is
+  discarding unread ([docs/wrong.md](docs/wrong.md)). The inconsistency
+  the earlier README recorded here — `Skip` accepting simple values
+  `Unmarshal` rejects — was real, was one of four such divergences, and
+  is resolved: both walks are now one walk.
 - **`Marshal(v)`** encodes the same shaped set (see the scoped canonical
   note above), round-trip-checked against fxamacker.
 
@@ -109,6 +120,30 @@ until touched), measured and deferred — see the note in decode.go and
 the record in [docs/wrong.md](docs/wrong.md).
 
 Pure Go, no cgo.
+
+## The full model
+
+The shipped API is a JSON-shaped projection, and a projection loses
+things. Three packages hold what it drops, and the shipped API is now an
+adapter over them rather than a second implementation:
+
+- **[`simdcbor/value`](value)** — the exact data model. Integers keep the
+  full CBOR range including the `-2^64` endpoint no `int64` holds; floats
+  keep their width and their exact bits, so `-0.0` stays apart from `0.0`
+  and two NaN payloads stay two values; the simple space is whole; maps
+  keep wire order. Map keys compare by canonical encoding, which is what
+  makes the three spellings of `1.0` one key.
+- **[`internal/codec`](internal/codec)** — one head-argument-body walk
+  serving decode, skip, frame, stream and encode. Deterministic modes for
+  both RFC 8949 orderings, a duplicate-key policy, tag keep/discard/
+  interpret, and lazy `RawMessage` framing at zero allocation.
+- **[`simdcbor/diag`](diag)** — RFC 8949 diagnostic notation, rendered and
+  parsed, round-tripping through the value model.
+
+Rebuilding the shipped API as an adapter over that walk also made it
+faster than the hand-written decoder it replaced: instructions retired
+fell 29.1% on a large array, 18.4% on numbers and 12.9% on strings, and
+rose 3.9% on 40-level nesting where per-item overhead dominates.
 
 ## Documentation
 
