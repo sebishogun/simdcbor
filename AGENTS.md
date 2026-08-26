@@ -176,36 +176,32 @@ number behind it does not go in a doc.
 
 ## What this repository is
 
-`simdcbor` is a CBOR (RFC 8949) codec built on the two-stage architecture
-of [simd](https://github.com/sebishogun/simd): a first pass over head bytes
-finds where every item begins, then a walk builds Go values from that index.
-The only simd kernel in use is `ValidUTF8` for text strings; byte-string
-copies are plain memmoves.
+`simdcbor` is a CBOR (RFC 8949) codec built around one
+head-argument-body walk in `internal/codec`. The walk serves decode, strict
+skip, framing, streaming, and the exact value model; the root package projects
+that work onto JSON-shaped Go values. The only simd kernel in use is
+`ValidUTF8` for text strings; byte-string copies are plain memmoves.
 
-**Shipped scope today is the JSON-shaped subset**, not the full RFC:
+**The root package remains the JSON-shaped adapter:**
 
 - `Unmarshal(data []byte) (any, int, error)` — decodes the item at the front
   of `data` into `map[string]any` / `[]any` / `float64` shapes, returning the
   consumed byte count.
 - `Marshal(v any) ([]byte, error)` — encodes the inverse of that set.
-- `Skip(data []byte) (int, error)` — advances past an item without building
-  it; allocation-free filtering.
+- `Skip(data []byte) (int, error)` — framing-only, allocation-free filtering;
+  it deliberately accepts a superset of the adapter value model.
+- `SkipStrict(data []byte) (int, error)` — the exact `Unmarshal` boundary and
+  span for callers that need a skipped item to be adapter-decodable.
 - `ErrTruncated`, `ErrMalformed` — the only two error values.
 
-Gaps (all deliberate, all documented): string map keys only, numbers as
+Adapter gaps are deliberate and documented: string map keys only, numbers as
 `float64`, depth cap 64, indefinite forms rejected, tags discarded, duplicate
-keys last-wins, a restricted marshal type set. One gap is a known bug, not a
-decision: `Skip` accepts simple values `0`–`19` and the `0xf8` form that
-`Unmarshal` rejects with `ErrMalformed` — do not claim Skip/Unmarshal parity
-(see `docs/wrong.md`; scheduled as Stage 0 of the production plan). There is
-**no full RFC 8949 claim** anywhere in this repository.
-
-The approved target — a full RFC 8949 codec with streaming, tags, arbitrary
-keys, canonical/deterministic modes, lazy values, and diagnostic notation —
-is designed in `docs/plans/2026-08-13-simdcbor-production-design.md` and
-planned in `docs/plans/2026-08-13-simdcbor-production.md`. `docs/roadmap.md`
-orders the work; the LLDs in `docs/lld/` pin the data model, decoder,
-encoder, and streaming/lazy/diagnostic designs.
+keys last-wins, and a restricted marshal type set. The full codec packages
+(`value`, `internal/codec`, `diag`) now exist with streaming, tags, arbitrary
+keys, deterministic modes, lazy values, and diagnostic notation. There is no
+tagged release or root-package full-RFC claim; the R2 ledger owns the remaining
+contracts and release evidence. The measured `Skip`/`SkipStrict` split is
+recorded in `docs/wrong.md`.
 
 ## Required reading order
 
@@ -237,12 +233,12 @@ decisions.
 make test        # go test ./...
 make vet         # gofmt -l . ; go vet ./...
 make bench       # one process, shuffled, count=6, minimum — the numbers the README quotes
-make bench-check # tee'd to /tmp/simdcbor-bench.txt; pipes without pipefail, so NOT a reliable gate alone
+make bench-check # pipe-safe comparison against testdata/bench.txt
 ```
 
-`bench-check`'s pipe launders a failing `go test` into a green exit unless
-run under `set -o pipefail`; a later code task fixes the Makefile
-(roadmap Phase 1). Treat it as informational until then.
+`bench-check` now has no verdict-carrying pipe. Its committed baseline was
+captured at load 4.82, so regenerate it below load 1 before treating a
+wall-clock comparison as publishable evidence.
 
 ## Rules that cost real time when skipped
 
@@ -276,32 +272,68 @@ before it happens. Fuzz before and after every decoder change.
 
 ## Task scope
 
-Scope is **per task**, not a standing branch rule. The current branch
-(`docs/v120-documentation`) is documentation-only for the current task —
-only `.md` files change here; Go, tests, module files, the Makefile, and
-assets are out of scope for *that* task. A code task executes on its own
-branch (per the plan) and changes exactly what that task lists. No task
+Scope is **per task**, not a standing branch rule. A documentation-only task
+changes only `.md` files; Go, tests, module files, the Makefile, and assets are
+out of scope for that task. A code task changes exactly what its ledger row and
+approved plan list. No task
 implies permission to push, tag, or release unless the task says so.
 
 ## Release and version status
 
 Current status, factual: **no tagged or published release exists** (no
-git tags, local or remote; pre-v1), and the shipped API is the
-JSON-shaped subset described above. Release gates are the plan's Task 11
-gate list and `docs/verification.md`'s rules — full suite, race, vet,
-fuzz, cross-arch, benchmarks recorded — plus the owner's decision; docs
-never declare a release.
+git tags; pre-v1). The root API is the JSON-shaped adapter above, while the
+full codec packages are implemented. Release gates are the R2 ledger and
+`docs/verification.md` — full suite, race, vet, fuzz, cross-arch, benchmarks
+recorded — plus the owner's decision; docs never declare a release.
 
-**Roadmap-not-shipped:** `docs/roadmap.md`, the design, and the plan
-describe the approved target, not shipped behavior. Nothing in them is a
-claim about what the package does today; only the README's shipped
-sections, `docs/architecture.md`'s shipped scope, `docs/verification.md`'s
-pinned list, and the code and tests state what ships.
+**Roadmap history versus current work:** R1 phases 0-8 and plan Tasks 0-11
+are executed historical records; the production-readiness section and R2
+ledger own what remains. README, architecture, verification, code, and tests
+state current behavior.
+
+## Production task management
+
+Production work toward v1 is tracked in the Production readiness ledger
+at the bottom of `docs/plans/2026-08-13-simdcbor-production.md`. The
+rules are binding:
+
+- **Local authority.** The ledger is the tracker. This repository's docs
+  decide what R2 work exists, what it means, and when it is done;
+  nothing outside the repository (no issue tracker, no tool) closes,
+  rejects, renumbers, or reorders a row.
+- **Stable IDs.** `CBOR-V1-NN` IDs are stable reference keys,
+  not an ordering, priority, or canonical sequence. Never renumber;
+  never imply rank from an ID.
+- **One ID per item.** Each ID is issued once and names exactly one work
+  item. A closed or rejected ID is never reused.
+- **One task at a time.** A session touching implementation work names its
+  ledger ID in its first message; without one it touches no implementation
+  files.
+- **Noncanonical family index.** The index at
+  `GO_SIMD/docs/plans/2026-08-24-simd-family-production-readiness.md` is a link
+  collection and never overrides local truth or duplicates task status.
+- **States and rejection.** A row is in exactly one of `open`,
+  `staged`, `in-progress`, `blocked`, `evidence-complete`, `shipped`,
+  `rejected`. Every transition is an edit in the ledger backed by
+  recorded evidence; `shipped` creates or updates CHANGELOG.md, and
+  `rejected` records its measurement in `docs/wrong.md` with the
+  reopen condition there. `rejected` is terminal without a documented
+  reopen condition; rejection is never a silent removal.
+- **Timed bare gates.** Every gate a row runs carries an explicit
+  timeout and runs bare - never piped through `tail`/`tee` without
+  `pipefail`.
+
+The oracle is RFC 8949; the libraries (fxamacker/cbor, QCBOR, TinyCBOR,
+serde_cbor, ciborium) are peers compared only where a row says so
+explicitly, and a difference from a library is resolved by the RFC's
+text, not by matching the library. Evidence is concrete vectors,
+indefinite forms, and round-trip shapes, or a sourced measurement - no
+invented figures.
 
 ## Concurrency posture
 
-The shipped API is three stateless package functions — `Unmarshal`,
-`Marshal`, `Skip` — plus the two error values. No package-level mutable
+The root API has four stateless package functions — `Unmarshal`, `Marshal`,
+`Skip`, `SkipStrict` — plus the two error values. No package-level mutable
 state, no retained input: every function is safe for concurrent calls
 from any number of goroutines. The caller owns the input slice (never
 retained, safe to reuse after the call) and the results (freshly

@@ -176,23 +176,16 @@ number behind it does not go in a doc.
 
 ## Know the shipped scope before touching anything
 
-This package ships the **JSON-shaped subset** of CBOR, not the full RFC:
-`Unmarshal` -> `map[string]any` / `[]any` / `float64`, string keys only,
-tags discarded, indefinite rejected, depth cap 64, duplicate keys
-last-wins. No full RFC 8949 claim is made anywhere. The full codec is a
-designed, planned, not-yet-built target (`docs/plans/`, `docs/roadmap.md`,
-`docs/lld/`). Do not describe the package as RFC-complete; do not let a
-code change silently widen or narrow the subset without updating the
-README, `docs/wrong.md` where it argues against a change, and the tests
-that pin the subset.
-
-One shipped inconsistency is a known bug, not a decision: `Skip` accepts
-simple values `0`–`19` and the `0xf8` form that `Unmarshal` rejects with
-`ErrMalformed`. Never claim Skip/Unmarshal parity — the shipped
-`TestSkipMatchesUnmarshal` cannot see it (the corpus never generates
-those simple values; the random-bytes loop discards both errors). The
-divergence is recorded in `docs/wrong.md` and scheduled as Stage 0 of the
-production plan.
+The root package ships the **JSON-shaped adapter**: `Unmarshal` projects to
+`map[string]any` / `[]any` / `float64`, with string keys, discarded tags,
+rejected indefinite forms, depth cap 64, and last-wins duplicates. `Skip`
+checks framing and deliberately accepts a superset; `SkipStrict` has
+`Unmarshal`'s boundary and span. The full codec packages (`value`,
+`internal/codec`, `diag`) are implemented, but no tagged release or
+root-package full-RFC claim exists. Do not let a code change silently widen
+or narrow the adapter subset without updating README, the tests, and
+`docs/wrong.md` where measurement decides the boundary. The measured
+`Skip`/`SkipStrict` split is closed in `docs/wrong.md`.
 
 ## Required reading order
 
@@ -237,8 +230,9 @@ minimum, never across sessions. Machine quiet, load average under 1.
 **Never pipe a gate through `tail`** (or anything else) without
 `pipefail`: the pipe reports the last command's status and a red run
 launders into a green exit. Run gates bare, or `set -o pipefail` first.
-`make bench-check` is itself such a pipe (through `tee`, no `pipefail`) —
-not a reliable gate on its own; a later code task fixes the Makefile.
+`make bench-check` now uses a pipe-safe script. Its committed baseline was
+captured at load 4.82, so regenerate it below load 1 before using its
+wall-clock comparison as publishable evidence.
 
 ## The record
 
@@ -258,28 +252,56 @@ Fuzz before and after any decoder change.
 
 ## Task scope and releases
 
-Scope is **per task**, not a standing branch rule. This branch
-(`docs/v120-documentation`) is documentation-only for the current task —
-only `.md` files change here. A code task runs on its own branch (per the
-plan) and changes exactly what that task lists; no task implies
+Scope is **per task**, not a standing branch rule. A documentation-only task
+changes only `.md` files. A code task changes exactly what its ledger row and
+approved plan list; no task implies
 permission to push, tag, or release unless it says so.
 
-Current status, factual: **no tagged or published release** (no git
-tags, local or remote; pre-v1); the shipped API is the JSON-shaped
-subset. Release gates are the plan's Task 11 gate list and
-`docs/verification.md`'s rules — full suite, race, vet, fuzz, cross-arch,
-bench records — plus the owner's decision; docs never declare a release.
-The roadmap, design, and plan describe the approved target, **not
-shipped behavior**; only the README's shipped sections,
-`docs/architecture.md`'s shipped scope, `docs/verification.md`'s pinned
-list, and the code and tests state what ships.
+Current status, factual: **no tagged or published release** (no tags; pre-v1).
+The root API is the JSON-shaped adapter, while the full codec packages are
+implemented. Release gates are the R2 ledger and `docs/verification.md` — full
+suite, race, vet, fuzz, cross-arch, bench records — plus the owner's decision;
+docs never declare a release. R1 phases 0-8 and plan Tasks 0-11 are historical;
+the roadmap's production-readiness section and R2 ledger own what remains.
 
 Before committing: `make test`, `make vet`, `go test -race ./...`, and
 check that every internal link in changed docs resolves.
 
+## Production task management
+
+Production work toward v1 lives in the Production readiness ledger at
+the bottom of `docs/plans/2026-08-13-simdcbor-production.md`. Binding
+rules:
+
+- **Local authority.** The ledger is the tracker; nothing outside the
+  repository closes, rejects, renumbers, or reorders a row.
+- **Stable IDs.** `CBOR-V1-NN` is a stable reference key, not
+  an ordering or priority; never renumber, never infer rank from an ID.
+- **One ID per item.** Issued once, names one item; never reused.
+- **One task at a time.** A session touching implementation work names its
+  ledger ID first; without one it touches no implementation files.
+- **Noncanonical family index.** The index at
+  `GO_SIMD/docs/plans/2026-08-24-simd-family-production-readiness.md` is a link
+  collection and never overrides local truth or duplicates task status.
+- **States and rejection.** A row is in exactly one of `open`,
+  `staged`, `in-progress`, `blocked`, `evidence-complete`, `shipped`,
+  `rejected`. Every transition is an edit in the ledger with recorded
+  evidence; `shipped` creates or updates CHANGELOG.md, and `rejected`
+  records its measurement in `docs/wrong.md` with the reopen condition
+  there. `rejected` is terminal without a documented reopen condition;
+  rejection is never a silent removal.
+- **Timed bare gates.** Explicit timeout on every gate; bare, never
+  piped without `pipefail`.
+
+RFC 8949 is the oracle; fxamacker/cbor, QCBOR, TinyCBOR, serde_cbor, and
+ciborium are peers compared only where a row says so explicitly, and a
+difference from a library is resolved by the RFC's text. Evidence is
+concrete - vectors, indefinite forms, round-trip shapes, sourced
+measurements; no invented figures.
+
 ## Concurrency posture
 
-`Unmarshal`, `Marshal`, and `Skip` are stateless package functions: no
+`Unmarshal`, `Marshal`, `Skip`, and `SkipStrict` are stateless package functions: no
 package-level mutable state, no retained input — safe for concurrent
 calls from any number of goroutines. The caller owns the input slice
 (never retained, safe to reuse after the call) and the results (freshly

@@ -1,6 +1,8 @@
 # simdcbor Production Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Execution status:** Tasks 0-11 below executed as R1 and remain the
+> historical work record. Do not re-execute them. Current work starts in the
+> R2 production-readiness ledger at the bottom of this file.
 
 **Goal:** Build the full RFC 8949 codec — `simdcbor/value`, `internal/codec` (streaming decoder/encoder), `simdcbor/diag` — with the shipped JSON-shaped API preserved as an explicit, byte-compatible adapter.
 
@@ -487,6 +489,11 @@ Expected: PASS.
 Run: `go test -run '^$' -bench . -benchmem -count=6 -shuffle=on ./internal/codec/` (one process, machine quiet).
 Compare the lazy filter against the shipped decode-all and skip-then-decode benchmarks (the shipped `bench_test.go` figures: decode-all 662 us vs skip-filter 79 us on the 2,000-record stream). If lazy values deliver the predicted allocation drop, record the delta in `docs/wrong.md`'s lazy-values entry as the superseding measurement; if they do not, record **that** finding — the entry exists precisely to hold whichever measurement arrives.
 
+**Current note (2026-08-26):** the figures above are the historical measurement
+the task was written against. The later committed `testdata/bench.txt` baseline
+recorded different minima under load 4.82, so neither record substitutes for a
+fresh quiet-host run.
+
 **Step 5: Commit**
 
 ```bash
@@ -623,3 +630,75 @@ git commit -m "docs: record full-codec gates, measurements, and links"
 **Step 7: Report**
 
 Report per the executing-plans protocol: each task's verification output, the SHA of the final commit, and the gate list with results. Do not push; do not tag; do not release.
+
+---
+
+## Production readiness ledger
+
+R1 (Tasks 0-11) builds the codec; R2 is the round that makes it
+shippable as v1. This ledger is the local authority for R2 work: this
+repository's docs are the tracker, and nothing outside the repository
+may close, reject, renumber, or reorder a row. R1 above is historical
+and untouched by R2.
+
+- **Stable IDs.** Each ID (`CBOR-V1-NN`) is a stable reference
+  key, not an ordering, priority, or canonical sequence. Rows may be
+  executed in any order that respects their dependencies; the ID never
+  changes and never implies rank.
+- **One ID per item.** An ID is issued once and refers to exactly one
+  work item. A closed or rejected ID is never reused.
+- **One task at a time.** A session touching implementation work names its
+  ledger ID in its first message; without one it touches no implementation
+  files.
+- **Noncanonical family index.** The index at
+  `GO_SIMD/docs/plans/2026-08-24-simd-family-production-readiness.md` is a link
+  collection and never overrides this ledger or duplicates its task status.
+- **States.** A row is in exactly one of `open`, `staged`,
+  `in-progress`, `blocked`, `evidence-complete`, `shipped`, `rejected`.
+  Every transition is an edit in the ledger backed by recorded
+  evidence; `shipped` creates or updates CHANGELOG.md, and `rejected`
+  records its measurement in `docs/wrong.md` with the reopen condition
+  there. `rejected` is terminal without a documented reopen condition;
+  rejection is recorded with its evidence, never a removal.
+- **Timed bare gates.** Every gate a row runs is bare - never piped
+  through `tail`/`tee` without `pipefail` - and carries an explicit
+  timeout.
+
+The oracle is RFC 8949: appendix A vectors are what behavior is checked
+against. fxamacker/cbor, QCBOR, TinyCBOR, serde_cbor, and ciborium are
+peers, not oracles: a row compares against a library only where the row
+says so explicitly, and a difference from a library is resolved by the
+RFC's text, not by matching the library. Evidence is concrete: a matrix
+of vectors, indefinite forms, and round-trip shapes against the RFC, or
+a sourced measurement. No invented figures.
+
+| ID | state | work | evidence | exit |
+|---|---|---|---|---|
+| CBOR-V1-01 | open | Byte-string representation: pin how byte strings appear in the value model and the adapter - the value kind, the adapter's decode shape, and the marshal type set - and fix the contract in the docs that pin the subset. | Matrix of RFC appendix A byte-string vectors through the value model and the adapter, including indefinite `5f` forms; round-trip shapes for every adapter type. | Representation contract fixed in the code and in the docs that pin it; adapter and value-model paths agree on the matrix. |
+| CBOR-V1-02 | open | Public limits and typed errors: export the codec's limit configuration and error taxonomy from the root package instead of the two blanket values, with the adapter's mapping pinned. | Vector matrix of limit violations (depth, presize, truncation) asserting the exact exported error each produces; sourced docs of the mapping. | Exported limits and typed errors usable without loss of adapter compatibility; every vector's error asserted by test. |
+| CBOR-V1-03 | open | Marshal adapter and the dead path: reimplement `Marshal` over the streaming encoder, pin byte identity against the shipped encoder's output, then delete the superseded encoder path. | Byte-identity snapshot corpus of shipped `Marshal` outputs taken before the swap; the snapshot re-checks after the swap; round-trip matrix through the new encoder. | Adapter `Marshal` byte-identical to the snapshot; dead path deleted; full suite green. |
+| CBOR-V1-04 | open | RawNext UTF-8: raw text items surfaced without materialization must still be validated as UTF-8 at framing, so a raw `Next` cannot hand out text the decoder would reject. | Matrix of UTF-8-valid and invalid text items (definite and indefinite) asserted at framing, not at materialization. | Every raw text item is UTF-8-validated at framing; no raw path accepts invalid UTF-8. |
+| CBOR-V1-05 | open | Linear indefinite text: indefinite text concatenation must validate in one linear pass over the chunks, not per-chunk revalidation or repeated copying. | Round-trip matrix of multi-chunk indefinite text; a sourced benchmark of a many-chunk item asserting linear time per the verification rules. | Many-chunk indefinite text decodes in linear time with one validation pass; the benchmark is recorded, or the finding goes to `docs/wrong.md`. |
+| CBOR-V1-06 | open | Repeated `0, nil` progress: the streaming `Next` must make progress on every call - an empty item or a zero-length record may not be reported as `0, nil` twice, which would hang a sequence loop. | Sequence matrix of empty items, zero-length items, and concatenated records asserting every `Next` advances or errors. | `Next` never returns `0, nil` twice; a progress invariant test is green under `-race`. |
+| CBOR-V1-07 | open | Diagnostics and documentation: finish `simdcbor/diag` error prefixes and write the release documentation the v1 surface needs (limits, errors, modes, adapter contract). | Notation round-trip matrix through the value model; the Task 9 diag vectors stay green; every doc claim checked against code. | Diagnostics shipped and documented; no doc claim contradicts the code. |
+| CBOR-V1-08 | open | Gates and first release: run the full matrix - RFC vectors, interop, `-race`, fuzz, cross-arch builds, benchmarks - and prepare the first v1 release; tag/publish operations stop at the evidence checkpoint until separately authorized. | The full gate list run bare and timed per `docs/verification.md`, plus the vector and interop matrices the rows above produced. | All gates green and release identity prepared; v1 tag/publish only when separately authorized. |
+| CBOR-V1-09 | open | Workload decisions: measure the codec against fxamacker/cbor, QCBOR, TinyCBOR, serde_cbor, and ciborium per workload, and record where it is competitive, where it is not, and what is a non-goal. | Interleaved A/B sweep per the benchmark rules, minimum of three, machine quiet, sourced in `docs/wrong.md` or a workload matrix doc. | A sourced workload matrix exists; each row's decision (optimize, document, non-goal) is recorded; no claim without its measurement. |
+
+CBOR-V1-07 explicitly includes the stale package comment and lazy-value note
+in `decode.go`: replace the two-stage/copy/hash description with the one-walk
+architecture and point the lazy-value rationale at the completed measurement
+in `docs/wrong.md`. Wave 0 is documentation-only and does not modify Go source.
+
+### Workload matrix (no numbers)
+
+RFC 8949 is the oracle for wire behavior. The libraries are peers except in a
+separately declared interop promise. Every row is measured on identical bytes
+and records peer versions; no feature count or borrowed result settles it.
+
+| workload | this repo | peers | oracle-or-basis | gate |
+|---|---|---|---|---|
+| RFC appendix A scalar, string and container vectors | root adapter and value model | fxamacker/cbor, QCBOR, TinyCBOR, serde_cbor, ciborium | RFC 8949 | vector and round-trip matrix |
+| definite and indefinite byte/text strings, including many-chunk text | streaming decoder, `RawNext`, adapter | same peers where the shape is exposed | RFC 8949 framing and UTF-8 rules | UTF-8, linear-time and allocation evidence |
+| concatenated sequence decode with empty and zero-length items | streaming `Next` path | same peers where sequence APIs exist | RFC 8949 sequence framing; local progress contract | progress matrix and `-race` |
+| encode and marshal over every supported adapter type | streaming encoder and `Marshal` | same peers | RFC-valid bytes; pre-swap snapshot only for this repo's byte-identity promise | round-trip and byte-identity corpus |
+| deep, large and truncated inputs at configured limits | decoder, raw path and adapter | same peers on equivalent configured limits | this repo's documented resource contract | limit/error matrix, fuzz and `GOMEMLIMIT` |

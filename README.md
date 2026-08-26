@@ -2,9 +2,9 @@
 
 CBOR (RFC 8949) decoding built on [simd.go](https://github.com/sebishogun/simd),
 the binary sibling of [simdjson](https://github.com/sebishogun/simdjson):
-the same two-stage architecture — find where every item begins, then
-build values from that — applied to a format whose framing is explicit
-in the head bytes. SIMD enters in exactly one place: validating a text
+one head-argument-body walk with different build steps for decode, strict
+skip, framing, streaming, and exact values. SIMD enters in exactly one place:
+validating a text
 string's UTF-8 through simd's `ValidUTF8` kernel. Byte-string copying is
 a plain memmove.
 
@@ -16,6 +16,7 @@ The shipped API is small and exact:
 v, n, err := simdcbor.Unmarshal(data) // v is map[string]any / []any / ...
 b, err := simdcbor.Marshal(v)         // the inverse, over the shaped set
 n, err := simdcbor.Skip(data)         // frame an item without building it
+n, err = simdcbor.SkipStrict(data)    // require Unmarshal's boundary
 ```
 
 Errors are the two package-level values `ErrTruncated` and `ErrMalformed`.
@@ -61,11 +62,12 @@ length-first legacy ordering is not implemented either, and the
 encoder never emits `float16`. The "canonical" claim is exactly what
 the code and tests prove, no more.
 
-There is **no full RFC 8949 conformance claim** in this repository. The
-full codec — exact value model, streaming decoder/encoder, tags,
-arbitrary keys, canonical/deterministic modes, lazy values, diagnostic
-notation — is designed and planned: [design](docs/plans/2026-08-13-simdcbor-production-design.md),
-[plan](docs/plans/2026-08-13-simdcbor-production.md), [roadmap](docs/roadmap.md).
+There is no tagged full-RFC release or root-adapter conformance claim. The
+full codec implementation — exact value model, streaming decoder/encoder,
+tags, arbitrary keys, deterministic modes, lazy values, and diagnostic
+notation — lives in the packages described below. Its executed design and
+remaining R2 release work are in the [design](docs/plans/2026-08-13-simdcbor-production-design.md),
+[plan](docs/plans/2026-08-13-simdcbor-production.md), and [roadmap](docs/roadmap.md).
 
 ## Beyond decode
 
@@ -114,10 +116,10 @@ numbers; re-running it yields fresh numbers under the rules in
 
 The huge-array row is the narrowest because it is allocation-bound: a
 `[]any` of five thousand boxed floats is mostly the boxing, which the
-two-stage scan cannot remove. That is the same any-decode residual
-simdjson documents; the next lever is lazy values (items as byte ranges
-until touched), measured and deferred — see the note in decode.go and
-the record in [docs/wrong.md](docs/wrong.md).
+shared walk cannot remove. That is the same any-decode residual simdjson
+documents. Lazy values were measured and did not beat framing-only `Skip`;
+see "Lazy values did not beat skipping" in
+[docs/wrong.md](docs/wrong.md).
 
 Pure Go, no cgo.
 
@@ -149,7 +151,7 @@ rose 3.9% on 40-level nesting where per-item overhead dominates.
 
 - [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md) — working notes for agents
 - [docs/architecture.md](docs/architecture.md) — shipped pipeline and target layout
-- [docs/roadmap.md](docs/roadmap.md) — the approved path to the full codec
+- [docs/roadmap.md](docs/roadmap.md) — the executed full-codec path and current R2 gaps
 - [docs/verification.md](docs/verification.md) — what the tests and benchmarks prove
 - [docs/wrong.md](docs/wrong.md) — measurements that argued against a change
 - LLDs: [data model](docs/lld/data-model.md), [decoder](docs/lld/decoder.md),

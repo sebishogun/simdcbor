@@ -2,12 +2,11 @@
 
 ## What this package is
 
-`simdcbor` decodes and encodes CBOR (RFC 8949) on the architecture of
-[simdjson](https://github.com/sebishogun/simdjson): a first pass over the
-head bytes finds where every item begins, then a walk builds values from
-that index instead of re-scanning. CBOR makes the framing explicit — every
-item's head byte carries its major type and a length — so the first pass is
-cheap arithmetic. SIMD enters in exactly one place: validating a text
+`simdcbor` decodes and encodes CBOR (RFC 8949) with one
+head-argument-body walk in `internal/codec`. Different build steps serve
+decode, strict skip, framing, streaming, and exact values without a second
+grammar that can drift. CBOR makes framing explicit in each head byte. SIMD
+enters in exactly one place: validating a text
 string's UTF-8 via [simd](https://github.com/sebishogun/simd)'s
 `ValidUTF8` kernel. Byte-string copying is a plain memmove, not a simd
 kernel; no other simd kernel is used.
@@ -18,13 +17,14 @@ consumed JSON into `any` consumes CBOR the same way.
 
 ## Shipped scope (current)
 
-The shipped API is four symbols, all in package `simdcbor`:
+The root adapter exports six names in package `simdcbor`:
 
 | symbol | behavior |
 |---|---|
 | `Unmarshal(data []byte) (any, int, error)` | decode the item at the front of `data`; return value, consumed bytes, error |
 | `Marshal(v any) ([]byte, error)` | encode a Go value; direct append, no backpatching |
 | `Skip(data []byte) (int, error)` | frame the item at the front; return its span, no allocation |
+| `SkipStrict(data []byte) (int, error)` | frame with `Unmarshal`'s accept boundary and span |
 | `ErrTruncated`, `ErrMalformed` | the only error values, package-level |
 
 This is the **JSON-shaped subset**, not the full RFC 8949 codec:
@@ -45,8 +45,8 @@ This is the **JSON-shaped subset**, not the full RFC 8949 codec:
 - simple values: `false`/`true`/`null` decode (and `undefined` → `nil`),
   floats `25`/`26`/`27` decode to `float64`; simple values `0`–`19`
   (`0xe0`–`0xf3`) and the two-byte `0xf8` form are rejected by
-  `Unmarshal` but **accepted by `Skip`** — a known parity bug (see Skip
-  below; `docs/wrong.md`; plan Stage 0);
+  `Unmarshal` and `SkipStrict`, while framing-only `Skip` accepts them by
+  design (see Skip below and `docs/wrong.md`);
 - canonical behavior exists only to the extent the code and tests prove
   it: Go string keys sorted with `sort.Strings` (content-bytewise —
   **not** RFC 8949 §4.2.1 core deterministic, which compares the full
@@ -63,44 +63,19 @@ See `docs/verification.md` for what the tests actually pin.
 
 ## Decode pipeline
 
-`Unmarshal` calls `decode(data, 0, 64)`, a recursive descent:
+`Unmarshal` constructs an adapter-configured `internal/codec.Decoder` and
+calls `DecodeJSON`. The decoder's one recursive walk reads the head, argument,
+and body, applies adapter limits and UTF-8 checks, and builds the JSON-shaped
+value directly. Building the exact `value.Value` first and projecting it later
+was measured at 2-3x slower because it added allocations and a second pass, so
+the shared grammar has multiple build steps instead.
 
-1. **Head check.** `i >= len(b)` is `ErrTruncated`; `depth < 0` is
-   `ErrMalformed`. The major type is `b[i] >> 5`, the additional
-   information `b[i] & 0x1f`.
-2. **Argument.** `readArg` consumes the argument: inline (`ai < 24`),
-   `uint8` (`24`), `uint16` (`25`), `uint32` (`26`), `uint64` (`27`), all
-   big-endian. `ai` 28–30 are reserved and `31` (indefinite) is
-   `ErrMalformed` — this is also how a `break` byte (`0xff`) anywhere is
-   rejected.
-3. **Dispatch by major type:**
-   - unsigned / negative: `float64(arg)` / `-1 - float64(arg)`;
-   - bytes / text: length checked against the buffer (`ErrTruncated` if it
-     overruns), text additionally `simd.ValidUTF8` (`ErrMalformed` on bad
-     UTF-8), result `string(s)`; `ai == 31` is `ErrMalformed` before the
-     length is read;
-   - array / map: a **pre-flight bound** rejects an impossible count
-     before any allocation (`arg > len(b)-i`, one byte per item, two per
-     pair), then the capacity is presized to `min(arg, 1024)` — the
-     allocation is bounded by the remaining input, which is exactly the
-     fix a fuzzer forced on the original unguarded presize;
-   - tag: transparent — decode the tagged item (depth decremented, tag
-     number discarded);
-   - simple: `20`/`21` → `false`/`true`, `22`/`23` → `nil`, `25` → `float64`
-     (half via `halfToFloat32bits` then `Float32frombits`), `26` →
-     `float64` (`Float32frombits`), `27` → `float64`
-     (`Float64frombits`) — every float width decodes to `float64`, NaN/Inf
-     payloads survive; `ai` 0–19, `24`, and anything else →
-     `ErrMalformed`.
-4. **Consumed count.** `Unmarshal` returns the index past the item;
-   trailing data is the caller's business (frame the next item with
-   `Skip`).
-
-The scan is two-stage in the sense the package comment describes — the
-head pass finds items, the walk builds values — but the shipped decoder is
-one recursive pass over `[]byte`, not the simulated index of
-`simdjson`. SIMD enters in exactly one place: `ValidUTF8` on text
-strings. The byte-string copy is a runtime memmove, not a simd kernel.
+The walk distinguishes truncation from malformed/out-of-model input before
+the root adapter maps errors to `ErrTruncated` or `ErrMalformed`. Pre-flight
+bounds cap every container allocation by remaining input; depth is capped at
+64 in adapter mode. `Unmarshal` returns the decoder offset, so trailing data is
+the caller's next item. SIMD enters only through `ValidUTF8`; byte strings use
+runtime memmove.
 
 ## Skip
 
@@ -127,10 +102,9 @@ those bytes, and the fuzz written to check that found three more classes:
 byte-string map keys, tagged string keys, and invalid UTF-8. The test that
 claimed to enforce parity could not see any of it: the generated corpus
 never produced those values, and the random-bytes loop discarded both
-errors. Recorded in `docs/wrong.md` and scheduled
-as Stage 0 of the production plan; the fix direction is policy-driven
-accept sets (the full simple-value model) rather than letting the two
-paths silently diverge. Depth cap is the same 64.
+errors. Recorded and closed in `docs/wrong.md`; the measured result is one
+walk with framing-only `Skip` and adapter-boundary `SkipStrict`. Depth cap is
+the same 64.
 
 ## Marshal
 
@@ -150,22 +124,19 @@ as the double. Unsupported types return `ErrMalformed`.
 | `ErrTruncated` | buffer ends inside a head, a string's length, or a container's declared items |
 | `ErrMalformed` | reserved `ai`, indefinite forms, non-string map key, invalid UTF-8, unknown simple value, unsupported marshal type, depth exceeded |
 
-`ErrMalformed` covers both "not CBOR" and "CBOR outside the subset" —
-deliberate: the subset has one reject boundary, intended to be shared by
-`Unmarshal` and `Skip` — currently violated for simple values (see Skip
-above; `docs/wrong.md`; plan Stage 0).
+`ErrMalformed` covers both "not CBOR" and "CBOR outside the subset". That
+subset boundary is shared by `Unmarshal` and `SkipStrict`; plain `Skip`
+documents its wider framing boundary.
 
-## Target architecture (designed, not built)
+## Full-codec architecture (implemented; adapter migration incomplete)
 
-The approved full RFC 8949 codec is designed in
-`docs/plans/2026-08-13-simdcbor-production-design.md` and planned in
-`docs/plans/2026-08-13-simdcbor-production.md`; the LLDs pin the details:
+R1 implemented the architecture designed in
+`docs/plans/2026-08-13-simdcbor-production-design.md`; the R2 ledger in the
+production plan owns the remaining contracts and release evidence:
 
-- **`simdcbor` (root)** — the current JSON-shaped API, rebuilt as an
-  explicit adapter over the full codec, byte-for-byte compatible with the
-  shipped behavior, with the Skip/Unmarshal simple-value divergence
-  closed (plan Stage 0) while every shipped accept/reject decision for
-  values the subset handles is preserved;
+- **`simdcbor` (root)** — the JSON-shaped API. `Unmarshal`, `Skip`, and
+  `SkipStrict` use the codec walk; `Marshal` remains the direct-append encoder
+  until CBOR-V1-03 migrates it with a byte-identity snapshot;
 - **`simdcbor/value`** — the exact value model: kinds for every CBOR major
   and simple type, integer/float bit fidelity, tags, arbitrary keys;
 - **`simdcbor/diag`** — RFC 8949 §8 diagnostic notation;

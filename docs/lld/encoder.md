@@ -1,42 +1,54 @@
 # LLD: encoder
 
-Low-level design for the streaming encoder in `internal/codec`. The
-shipped `Marshal` is the compatibility floor and the seed: direct append,
-lengths known before bytes, no backpatching. The new encoder keeps that
-property and adds streaming, modes, tags, and arbitrary keys.
+Low-level design for the implemented encoder in `internal/codec`. Root
+`Marshal` remains the compatibility floor and direct-append path until
+CBOR-V1-03 migrates it under a byte-identity snapshot. The codec encoder keeps
+forward append and adds incremental containers, modes, tags, and arbitrary
+keys.
 
 ## Position
 
-An `Encoder` writes into a caller-owned buffer or an `io.Writer`.
-Everything is a forward append; nothing is backpatched or re-emitted,
-which is what makes streaming (flush, bounded memory) possible. The head
+An `Encoder` appends to a caller-supplied buffer; `Bytes` returns the completed
+buffer. Everything is a forward append; nothing is backpatched or re-emitted.
+The head
 is written before the body, and for definite forms the length is known
 before the head — the property that makes backpatching unnecessary in
 CBOR at all, already exercised by `Marshal`.
 
-## API shape (target)
+## API shape (current)
 
 ```go
 type Encoder struct { ... }
 
+func NewEncoder(buf []byte) *Encoder
+func (e *Encoder) SetMode(m Mode)
+func (e *Encoder) Reset()
 func (e *Encoder) WriteValue(v value.Value) error
-func (e *Encoder) StartArray(n int) error       // definite
+func (e *Encoder) WriteUint(n uint64) error
+func (e *Encoder) WriteInt(i int64) error
+func (e *Encoder) WriteBytes(b []byte) error
+func (e *Encoder) WriteText(s string) error
+func (e *Encoder) WriteTag(number uint64) error
+func (e *Encoder) WriteSimple(n uint8) error
+func (e *Encoder) WriteFloat64(f float64) error
+func (e *Encoder) StartArray(n uint64) error       // definite
 func (e *Encoder) StartIndefiniteArray() error  // break-terminated
 func (e *Encoder) EndArray() error
-func (e *Encoder) StartMap(n int) error
+func (e *Encoder) StartMap(n uint64) error
 func (e *Encoder) StartIndefiniteMap() error
 func (e *Encoder) EndMap() error
-func (e *Encoder) WriteTag(n uint64) error
-func (e *Encoder) WriteHead(mt byte, arg uint64) error // low-level; exported for streaming containers
-func (e *Encoder) Bytes() []byte
-func (e *Encoder) Flush() error
+func (e *Encoder) StartIndefiniteBytes() error
+func (e *Encoder) StartIndefiniteText() error
+func (e *Encoder) WriteChunk(b []byte) error
+func (e *Encoder) EndBytes() error
+func (e *Encoder) EndText() error
+func (e *Encoder) Bytes() ([]byte, error)
 ```
 
-The current `Marshal(v any) ([]byte, error)` becomes the adapter's
-entry point: build a `value.Value` in JSON-shaped form, encode with the
-adapter's fixed mode (sorted bytewise keys, `float32`-then-`float64`,
-shortest heads, **no** `float16`), and return exactly the bytes the
-shipped encoder would have produced.
+CBOR-V1-03 moves `Marshal(v any) ([]byte, error)` onto this encoder with the
+adapter's fixed mode (sorted bytewise keys, `float32`-then-`float64`, shortest
+heads, **no** `float16`) and requires exact byte identity with the current
+direct-append encoder.
 
 ## Heads and shortest forms
 

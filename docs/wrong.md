@@ -33,15 +33,15 @@ It was measured and deferred rather than unmeasured: `Skip` already
 delivers the allocation-free traversal for the filtering case — the filter
 benchmark (decode 1 record in 100, skip the rest) runs 8.4x faster than
 decoding all of them (79 us vs 662 us) — which is the larger half of what
-lazy values would buy, at zero interface cost. When the full codec lands,
-Phase 7 re-runs the sweep and records the delta; if lazy values do not
-deliver the predicted allocation drop, that finding belongs here.
+lazy values would buy, at zero interface cost. R1's lazy-value phase has
+landed; the committed baseline was captured under load and CBOR-V1-09 owns the
+fresh quiet-host workload decision.
 
 ## Presize overflow on malformed length headers
 
-**Status:** fixed in `fb05cdd`; bounded in code by the pre-flight check
-and presize cap, but **not yet pinned by a test** — the pin
-(`TestPresizeBounded`) is scheduled in the plan's Task 2.
+**Historical status:** fixed in `fb05cdd`; the test pin was still scheduled.
+**Resolution:** `TestPresizeBounded` now pins the pre-flight check and presize
+cap; `TestDepthCap` and `TestTruncationNeverDecodesClean` pin adjacent limits.
 
 The original decoder presized container allocations from the header's
 declared length before bounding it by the remaining input. Fuzzing with
@@ -74,7 +74,9 @@ order".
 
 ## Skip accepts simple values Unmarshal rejects
 
-**Status:** open bug, scheduled as Stage 0 of the production plan.
+**Historical status:** open bug, scheduled as Stage 0 of the production plan.
+**Resolution:** closed 2026-08-14 by the measured `Skip`/`SkipStrict` split;
+see "The identical-boundary contract costs more than it looks" below.
 Source: `skip.go:31` (`case mtUint, mtNegInt, mtSimple: return j, nil`)
 against `decode.go:116-131` (only `ai` 20–23 and 25–27 handled); the
 test's blindness is in `skip_test.go:48-56`.

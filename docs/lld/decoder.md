@@ -1,19 +1,17 @@
 # LLD: decoder
 
-Low-level design for the streaming decoder in `internal/codec`, the core
-of the approved full RFC 8949 codec. The shipped `Unmarshal`/`Skip`
-behavior is the compatibility floor: the new decoder must accept and
-reject exactly what the shipped subset accepts and rejects when running
-in adapter (JSON-shaped) mode, and span items identically.
+Low-level design for the streaming decoder in `internal/codec`, the core of
+the implemented full codec. Root `Unmarshal` and `SkipStrict` define the
+JSON-shaped adapter boundary; plain `Skip` is the documented framing superset.
 
 ## Position
 
 The decoder is a **cursor over a buffer** plus an optional reader-backed
 refill for streaming. One `Decoder` owns one input position; repeated
 `Next`/`Unmarshal` calls advance it. There is no random access and no
-separate index pass — framing is computed on the fly from head bytes, and
-the two-stage scan of the package comment survives as "frame the head,
-then consume the body" within each item.
+separate index pass — framing is computed on the fly from head bytes in one
+head-argument-body walk. The old two-stage package comment is stale source
+documentation and is owned by CBOR-V1-07.
 
 ## The state machine
 
@@ -86,32 +84,26 @@ Each item is read as: **head byte → argument → body**.
 | `ErrDuplicateKey` | n/a (adapter: last-wins) | duplicate key under `Error` policy |
 | `ErrUnsupportedKey` | (mapped to `ErrMalformed`) | non-string key in adapter mode; structural key when disabled |
 
-The invariant that matters: **in adapter mode, the error set and the
-accept/reject boundary are identical to the shipped `Unmarshal`**, and
-`Skip` must span exactly what `Unmarshal` consumes. The shipped
-`TestSkipMatchesUnmarshal` cannot enforce this on its own (see Skip
-parity below); the new decoder's suite enforces it by construction — the
-head-byte enumeration test, the extended corpus, and both errors
-asserted in the random-input loop (plan Tasks 1 and 4).
+The adapter has two explicit contracts. `SkipStrict` has `Unmarshal`'s error
+set, accept/reject boundary, and span. Plain `Skip` has the wider framing
+boundary and must accept every item `Unmarshal` accepts. The shared decoder
+walk plus the head-byte, generated-document, and random-input suites enforce
+both contracts.
 
 ## Skip parity
 
-`Skip` is the decoder with the build step removed: frame heads, walk
-lengths, allocate nothing. It is not a separate grammar — the new decoder
-implements `skip` over the same state machine, so the two **cannot
-drift**: accept sets and spans come from one code path.
+`Skip` is the decoder walk with framing-only policy and no value build: frame
+heads, walk lengths, allocate nothing. `SkipStrict` runs the same grammar with
+the adapter projection, so a successful strict skip is exactly an item
+`Unmarshal` would build. Keeping the traversal shared prevents grammatical
+drift while allowing the two measured policies.
 
-The shipped package is the standing counterexample. `skip.go` accepts
-every simple value the head allows (major 7, `ai` 0–19 and the `0xf8`
-form) while `decode.go` rejects them with `ErrMalformed` — a `Skip` that
-succeeds on bytes `Unmarshal` refuses. The shipped test cannot see it:
-the generated corpus never produces those simple values, and the
-random-bytes loop discards both errors (`_ = ue; _ = se`), so it asserts
-nothing about agreement. The divergence is recorded in `docs/wrong.md`;
-the plan's Stage 0 aligns the accept sets (policy-driven, so the full
-simple-value model is the end state rather than a silent divergence), and
-the decoder task adds the corpus and assertion work: head-byte
-enumeration, simple values in the generator, both errors asserted.
+History matters here: the original `Skip` claimed strict parity but differed
+on simple values, non-string and tagged map keys, and invalid UTF-8. Enforcing
+all value-model checks in plain `Skip` cost +92.5% instructions on the filter
+workload. The resolution in `docs/wrong.md` kept framing-only `Skip`, added
+`SkipStrict`, and pinned strict parity plus one-directional framing-superset
+tests.
 
 ## Ownership and scratch
 

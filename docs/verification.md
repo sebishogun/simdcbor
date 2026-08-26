@@ -39,20 +39,16 @@ themselves.
 make test        # go test ./...
 make vet         # gofmt -l . ; go vet ./...
 make bench       # one process, shuffled, count=6, minimum of the count
-make bench-check # same, tee'd to /tmp/simdcbor-bench.txt, 8% floor
+make bench-check # pipe-safe comparison against committed baseline, 8% guard
 go test -race ./...
 ```
 
-The bench numbers the README quotes are **minima** of repeated runs on
-one quiet machine (amd64/avx512), the floor being 8.3% (code-layout
-noise; see CLAUDE.md). `bench-check` currently tees to
-`/tmp/simdcbor-bench.txt` for comparison against the quoted record; the
-reference file `testdata/bench.txt` is not yet committed — the 8% floor
-is a gate discipline, not a committed artifact. **Caveat:** `bench-check`
-pipes `go test` through `tee` without `pipefail`, so the pipe reports
-`tee`'s status and a failing run would launder green. Run it under
-`set -o pipefail`, or treat it as informational; the plan's Task 2
-(roadmap Phase 1, safety) fixes the Makefile.
+The README numbers are historical minima. `bench-check` now runs
+`scripts/bench-check.sh` with no verdict-carrying pipe and compares against the
+committed `testdata/bench.txt`. That baseline was captured at load 4.82, so it
+is an operational regression guard, not publishable quiet-host evidence;
+regenerate it with `make bench-baseline` below load 1 before citing a
+wall-clock comparison. The code-layout floor remains 8.3% (CLAUDE.md).
 
 ## What the tests pin today
 
@@ -63,33 +59,24 @@ pipes `go test` through `tee` without `pipefail`, so the pipe reports
 - **Round trip**: `Marshal` → `Unmarshal` is identity on the shaped set,
   and fxamacker decodes our bytes (3000 cases); the same map encodes to
   the same bytes (canonical-within-the-subset claim).
-- **Skip parity (known broken, scheduled)**: the intent — `Skip` and
-  `Unmarshal` agree on accept/reject and span — is exercised by
-  `TestSkipMatchesUnmarshal` over a generated corpus (5000 cases), but
-  the test is blind to the one real divergence: the corpus never
-  generates simple values (`ai` 0–19, `0xf8` form) and the random-bytes
-  loop discards both errors (`_ = ue; _ = se`), so it asserts nothing
-  about agreement. `Skip` accepts those simple values; `Unmarshal`
-  rejects them with `ErrMalformed` — and `skip.go`'s doc comment claims
-  the boundary is identical to `Unmarshal`'s, a known
-  implementation-doc defect corrected at the source in the Stage 0 task.
-  Recorded in `docs/wrong.md`; fixed
-  by the plan's Stage 0, with corpus and assertion work in the decoder
-  task.
+- **Skip contracts**: `SkipStrict` and `Unmarshal` agree on accept/reject and
+  span over all 256 heads, all 256 two-byte simple payloads, RFC vectors,
+  200k random inputs, and 50k generated documents. Plain `Skip` is asserted
+  one-directionally as the framing superset. The measured split and the four
+  historical divergences are closed in `docs/wrong.md`.
 - **Truncation**: every prefix of a real item errors; **random bytes**
-  never panic (5000 inputs). The fuzzer-caught presize overflow is
-  bounded in the code (pre-flight check plus presize cap) but is **not
-  yet pinned by a test** — the pin (`TestPresizeBounded`) is scheduled in
-  the plan's Task 2.
+  never panic. `TestPresizeBounded`, `TestDepthCap`, and
+  `TestTruncationNeverDecodesClean` pin the fuzzer-found allocation and limit
+  boundaries.
 - **Floats**: half/single/double decode to the same `float64`.
 
-These tests bound every claim the README makes about the **subset**.
-Claims the tests do not cover — full RFC conformance, arbitrary keys,
-tags, indefinite forms, canonical modes — are explicitly not made.
+These tests bound every root-adapter claim. The full-codec gates below cover
+RFC vectors, arbitrary keys, tags, indefinite forms, and deterministic modes;
+a tagged full-RFC release claim remains gated by the R2 ledger.
 
-## Full-codec gates (target)
+## Full-codec gates (live)
 
-When the production plan lands, verification grows to:
+The executed production plan added:
 
 1. **RFC 8949 vectors.** Every item from RFC 8949 appendix A (and the
    §3.4/§4 example items) decodes to the documented value and encodes

@@ -1,5 +1,11 @@
 # Full RFC 8949 codec design
 
+> **Execution note:** R1 implemented this design on 2026-08-14. References
+> below to the then-shipped subset and planned shared `Skip` boundary are the
+> historical design inputs. Measurement changed that boundary: plain `Skip`
+> keeps framing semantics and `SkipStrict` carries `Unmarshal` parity; see
+> `docs/wrong.md`, "The identical-boundary contract costs more than it looks".
+
 ## Goal
 
 Grow `simdcbor` from its shipped JSON-shaped subset into a full RFC 8949

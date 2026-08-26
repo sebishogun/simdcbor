@@ -1,11 +1,14 @@
 # Roadmap: from JSON-shaped subset to full RFC 8949 codec
 
-The shipped package is the JSON-shaped subset, deliberately bounded. This
-roadmap is the approved path to the full RFC 8949 codec, in the order the
-design mandates. The ordering rationale is short: a small consistency fix
-first (Stage 0), then **safety, then data model, then streaming, then the
-surface features** — every later phase builds on the value model, and no
-phase ships on an unsafe base.
+The root package remains the deliberately bounded JSON-shaped adapter. R1
+implemented the full codec packages through phases 0-8 below; R2 tracks the
+remaining contracts and first-release evidence. The ordering rationale was
+safety, then data model, then streaming, then surface features.
+
+The phase text is the historical plan and remains useful as the work record.
+One planned boundary executed differently after measurement: plain `Skip`
+keeps the framing superset and `SkipStrict` carries `Unmarshal` parity. See
+`docs/wrong.md`, "The identical-boundary contract costs more than it looks".
 
 The full design lives in
 `docs/plans/2026-08-13-simdcbor-production-design.md`; the executable
@@ -148,14 +151,15 @@ rendering for error messages, per the LLD.
 
 Exit: notation round-trips through the value model; error prefixes render.
 
-## Adapter rule (all phases)
+## Adapter rule (executed)
 
-The shipped API — `Unmarshal(data) (any, n, error)`, `Marshal(any)`,
-`Skip(data)`, `ErrTruncated`/`ErrMalformed` — is the JSON-shaped adapter
-over the new core from Phase 3 onward: same shapes, same errors, same
-reject boundary (consistent across `Unmarshal` and `Skip` from Phase 0
-onward), same bytes on encode. It never changes; widening happens through
-new APIs. Each phase keeps the full existing test suite green.
+The root API — `Unmarshal(data) (any, n, error)`, `Marshal(any)`,
+`Skip(data)`, `SkipStrict(data)`, `ErrTruncated`/`ErrMalformed` — remains the
+JSON-shaped adapter. `Unmarshal` and `SkipStrict` share the adapter boundary;
+plain `Skip` exposes the wider framing boundary. `Marshal` keeps its historical
+bytes until CBOR-V1-03 moves it onto the streaming encoder under a byte-identity
+snapshot. Widening happens through the full-codec packages, not by silently
+changing adapter shapes.
 
 ## Cross-cutting gates
 
@@ -164,3 +168,29 @@ budget, RFC vectors and fxamacker interop where the phase touches the
 wire, benchmarks recorded per the verification rules, and any finding
 that argued against a change or a measurement that deferred one appended
 to `docs/wrong.md`.
+
+## R2 - Production readiness
+
+The phases above build the full codec; R2 is the round that makes it
+shippable as v1. Exact task IDs, states, evidence and exits live only in the
+[production-readiness ledger](plans/2026-08-13-simdcbor-production.md).
+
+The remaining high-level gaps are the byte-string representation contract;
+public limits and typed errors; one streaming-backed marshal path; UTF-8 and
+linear-time guarantees for raw and indefinite text; streaming progress;
+diagnostics and release documentation; full release evidence; and workload
+decisions against the named peers.
+
+The contracts every R2 row is held to:
+
+- RFC 8949 is the oracle. Appendix A vectors are what behavior is
+  checked against; nothing else is an authority a row may conform to.
+- The libraries are peers: fxamacker/cbor, QCBOR, TinyCBOR, serde_cbor,
+  and ciborium are compared against only where a row says so explicitly
+  (interop), and a difference from a library is resolved by the RFC's
+  text, not by matching the library.
+- Evidence is concrete and sourced: a matrix of vectors, indefinite
+  forms, and round-trip shapes against the RFC, or a measurement with
+  its source. No invented figures.
+
+The ledger owns the exact v1 exit.
